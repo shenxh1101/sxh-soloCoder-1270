@@ -24,8 +24,13 @@ class Bullet:
         self.age = 0
         self.max_age = 3000 if weapon_type == 'missile' else 2000
         self.trail_timer = 0
+        self.trail_color = None
+        self.prev_x = x
+        self.prev_y = y
 
     def update(self, dt, enemies=None, players=None):
+        self.prev_x = self.x
+        self.prev_y = self.y
         self.age += dt
         if self.age > self.max_age:
             self.alive = False
@@ -67,6 +72,25 @@ class Bullet:
             return
         try:
             r = max(1, int(self.radius))
+            if self.trail_color is not None:
+                try:
+                    dx = self.x - self.prev_x
+                    dy = self.y - self.prev_y
+                    dist = math.hypot(dx, dy)
+                    seg_count = max(1, int(dist / 4))
+                    for i in range(seg_count):
+                        t = (seg_count - i) / seg_count
+                        px = self.prev_x + dx * t
+                        py = self.prev_y + dy * t
+                        alpha = int(180 * t)
+                        tc = (self.trail_color[0], self.trail_color[1], self.trail_color[2], alpha)
+                        trail_surf = pygame.Surface((r * 4 + 2, r * 4 + 2), pygame.SRCALPHA)
+                        pygame.draw.circle(trail_surf, tc,
+                                          (trail_surf.get_width() // 2, trail_surf.get_height() // 2),
+                                          max(1, int(r * 1.5 * t + 1)))
+                        surface.blit(trail_surf, (px - trail_surf.get_width() // 2, py - trail_surf.get_height() // 2))
+                except Exception:
+                    pass
             if particle_system and self.weapon_type in ('missile', 'plasma'):
                 self.trail_timer += 16
                 if self.trail_timer > 20:

@@ -48,6 +48,10 @@ class Player:
         self.score_multiplier = 1.0
         self.dodge_frame = 0
         self.alive = True
+        self.build_type = None
+        self.build_name = ''
+        self.build_color = (255, 255, 255)
+        self._build_cache_hash = None
 
     @property
     def current_weapon(self):
@@ -219,6 +223,18 @@ class Player:
             )
             for b in bullets:
                 b.damage *= self.damage_mult
+                if self.build_type:
+                    b.trail_color = self.build_color
+                    b._trail_timer = current_time
+                    if self.build_type in ('overload', 'saturate'):
+                        b.radius *= 1.1
+                    elif self.build_type == 'glass_cannon':
+                        b.damage *= 1.2
+                        b.color = self.build_color
+                    elif self.build_type == 'rapid':
+                        b.speed *= 1.15
+                    elif self.build_type == 'fortress':
+                        b.radius *= 1.2
             if getattr(self, 'extra_pellets', 0) > 0:
                 base_bullets = list(bullets)
                 for n in range(self.extra_pellets):
@@ -357,6 +373,52 @@ class Player:
             self.damage_mult *= 1.15
         elif upgrade_id == 'multi_shot':
             self.extra_pellets += 1
+        self.detect_build()
+
+    def detect_build(self):
+        cache_hash = tuple(sorted(self.upgrades))
+        if cache_hash == self._build_cache_hash:
+            return
+        self._build_cache_hash = cache_hash
+        has_multi = 'multi_shot' in self.upgrades
+        has_heat_down = 'heat_down' in self.upgrades
+        has_damage = 'damage_up' in self.upgrades
+        has_shield = 'shield_up' in self.upgrades
+        has_speed = 'speed_up' in self.upgrades
+        has_weapon = 'weapon_upgrade' in self.upgrades
+
+        if has_multi and has_heat_down:
+            self.build_type = 'overload'
+            self.build_name = '过载散热流'
+            self.build_color = (100, 255, 200)
+        elif has_damage and (has_damage and self.upgrades.count('damage_up') >= 2):
+            self.build_type = 'glass_cannon'
+            self.build_name = '玻璃大炮流'
+            self.build_color = (255, 100, 100)
+        elif has_speed and has_damage:
+            self.build_type = 'hit_run'
+            self.build_name = '游击机动流'
+            self.build_color = (200, 255, 100)
+        elif has_shield and has_weapon:
+            self.build_type = 'fortress'
+            self.build_name = '堡垒火力流'
+            self.build_color = (100, 150, 255)
+        elif has_weapon and has_heat_down:
+            self.build_type = 'rapid'
+            self.build_name = '急速射击流'
+            self.build_color = (255, 200, 100)
+        elif has_multi and has_damage:
+            self.build_type = 'saturate'
+            self.build_name = '饱和轰击流'
+            self.build_color = (255, 150, 255)
+        elif len(self.upgrades) >= 3:
+            self.build_type = 'hybrid'
+            self.build_name = '混合构筑'
+            self.build_color = (200, 200, 255)
+        else:
+            self.build_type = None
+            self.build_name = ''
+            self.build_color = (255, 255, 255)
 
     def get_time_scale(self):
         return 0.3 if self.slowmo_active else 1.0

@@ -1,0 +1,40 @@
+{
+  "configs": {
+    "重型火力流": {
+      "color_idx": 1,
+      "shape_idx": 1,
+      "weapon_idx": 0,
+      "upgrade_idx": 1,
+      "desc": "生命+30%，伤害+10%，开局武器升+伤害强化"
+    },
+    "轻型机动流": {
+      "color_idx": 2,
+      "shape_idx": 2,
+      "weapon_idx": 1,
+      "upgrade_idx": 2,
+      "desc": "速度+25%，散热强化，霰弹开局快速清屏"
+    },
+    "均衡标准流": {
+      "color_idx": 0,
+      "shape_idx": 0,
+      "weapon_idx": 0,
+      "upgrade_idx": 0,
+      "desc": "均衡属性，激光+1级，适合新手"
+    },
+    "导弹狙击流": {
+      "color_idx": 5,
+      "shape_idx": 3,
+      "weapon_idx": 2,
+      "upgrade_idx": 1,
+      "desc": "三角战机+追踪导弹，精准打击流"
+    },
+    "等离子破坏流": {
+      "color_idx": 4,
+      "shape_idx": 1,
+      "weapon_idx": 3,
+      "upgrade_idx": 3,
+      "desc": "重型+等离子炮，蓄力爆发流，护盾+伤害"
+    }
+  },
+  "selected": "均衡标准流"
+}

@@ -10,7 +10,7 @@ from game.boss import Boss
 from game.weapons import Bullet
 from game.audio import SoundManager
 from game.difficulty import DifficultyManager
-from game.score import HighScoreManager, ReplayManager, BestiaryManager
+from game.score import HighScoreManager, ReplayManager, BestiaryManager, ShipConfigManager
 from game.ui import UIManager
 from game.input import InputManager
 
@@ -43,7 +43,7 @@ class Game:
         self.menu_options = ['开始游戏', '双人合作', '机库', '敌人图鉴', '高分榜', '回放', '退出']
         self.menu_idx = 0
         self.hangar_idx = 0
-        self.hangar_options = ['颜色', '外形', '初始武器', '默认升级路线', '返回']
+        self.hangar_options = ['选择配置方案', '颜色', '外形', '初始武器', '默认升级路线', '保存为新方案', '返回']
         self.hangar_sub_idx = [0, 0, 0, 0]
         self.highscore_options = ['返回']
         self.highscore_idx = 0
@@ -78,6 +78,12 @@ class Game:
         self.highscores = HighScoreManager()
         self.replays = ReplayManager()
         self.bestiary = BestiaryManager()
+        self.ship_configs = ShipConfigManager()
+        self.apply_selected_config = True
+        self.config_mode = 'customize'
+        self.config_list_idx = 0
+        self._show_save_name_prompt = False
+        self._save_name_input = '我的方案'
         self.ui = UIManager()
         self.input = InputManager()
         self.players = []
@@ -101,6 +107,13 @@ class Game:
         self.powerup_chance = 0.08
 
     def reset_game(self, two_player=False):
+        if self.apply_selected_config:
+            cfg = self.ship_configs.get_selected_config()
+            if cfg:
+                self.ship_color_idx = cfg.get('color_idx', self.ship_color_idx)
+                self.ship_shape_idx = cfg.get('shape_idx', self.ship_shape_idx)
+                self.start_weapon_idx = cfg.get('weapon_idx', self.start_weapon_idx)
+                self.start_upgrade_idx = cfg.get('upgrade_idx', self.start_upgrade_idx)
         self.two_player_mode = two_player
         p1 = Player(1)
         p1.color = self.ship_colors[self.ship_color_idx][0]
@@ -130,7 +143,7 @@ class Game:
         self.replay_overlay_timer = 0
         if self.difficulty.wave % WAVE_BOSS_INTERVAL == 0:
             self.boss = Boss(self.difficulty.wave)
-            self.bestiary.record_boss(self.boss.name)
+            self.bestiary.record_boss(self.boss.name, self.difficulty.wave)
             self.state = GameState.BOSS_INTRO
             self.boss_intro_timer = 3000
             self.audio.play_boss_intro()
@@ -162,7 +175,7 @@ class Game:
         self.spawn_timer = 0
         if self.difficulty.wave % WAVE_BOSS_INTERVAL == 0:
             self.boss = Boss(self.difficulty.wave)
-            self.bestiary.record_boss(self.boss.name)
+            self.bestiary.record_boss(self.boss.name, self.difficulty.wave)
             self.state = GameState.BOSS_INTRO
             self.boss_intro_timer = 3000
             self.audio.play_boss_intro()
@@ -200,7 +213,7 @@ class Game:
         enemy = Enemy(enemy_type, difficulty=self.difficulty.difficulty_score)
         self.enemies.append(enemy)
         self.difficulty.enemies_spawned_in_wave += 1
-        self.bestiary.record_encounter(enemy_type)
+        self.bestiary.record_encounter(enemy_type, self.difficulty.wave)
 
     def spawn_powerup(self, x, y):
         if random.random() > self.powerup_chance:
@@ -257,32 +270,92 @@ class Game:
         if self.input.is_key_pressed(pygame.K_ESCAPE):
             self.state = self._prev_state
             return
+        if self.config_mode == 'list':
+            configs = self.ship_configs.list_configs()
+            options = configs + ['返回自定义']
+            if self.input.is_key_pressed(pygame.K_UP) or self.input.is_key_pressed(pygame.K_w):
+                self.config_list_idx = (self.config_list_idx - 1) % len(options)
+            if self.input.is_key_pressed(pygame.K_DOWN) or self.input.is_key_pressed(pygame.K_s):
+                self.config_list_idx = (self.config_list_idx + 1) % len(options)
+            if self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_SPACE):
+                if self.config_list_idx == len(options) - 1:
+                    self.config_mode = 'customize'
+                    self.hangar_idx = 0
+                elif self.config_list_idx < len(configs):
+                    name = configs[self.config_list_idx]
+                    cfg = self.ship_configs.get_config(name)
+                    if cfg:
+                        self.ship_color_idx = cfg.get('color_idx', 0)
+                        self.ship_shape_idx = cfg.get('shape_idx', 0)
+                        self.start_weapon_idx = cfg.get('weapon_idx', 0)
+                        self.start_upgrade_idx = cfg.get('upgrade_idx', 0)
+                        self.ship_configs.select_config(name)
+                        self.config_mode = 'customize'
+                        self.hangar_idx = 1
+                        self.audio.play_upgrade()
+            if self.input.is_key_pressed(pygame.K_DELETE) or self.input.is_key_pressed(pygame.K_BACKSPACE):
+                if self.config_list_idx < len(configs):
+                    name = configs[self.config_list_idx]
+                    if self.ship_configs.delete_config(name):
+                        self.config_list_idx = max(0, self.config_list_idx - 1)
+            return
+        if self.input.is_key_pressed(pygame.K_TAB):
+            self.config_mode = 'list'
+            self.config_list_idx = 0
+            return
         if self.input.is_key_pressed(pygame.K_UP) or self.input.is_key_pressed(pygame.K_w):
             self.hangar_idx = (self.hangar_idx - 1) % len(self.hangar_options)
         if self.input.is_key_pressed(pygame.K_DOWN) or self.input.is_key_pressed(pygame.K_s):
             self.hangar_idx = (self.hangar_idx + 1) % len(self.hangar_options)
         cur = self.hangar_idx
         if self.input.is_key_pressed(pygame.K_LEFT) or self.input.is_key_pressed(pygame.K_a):
-            if cur == 0:
+            if cur == 1:
                 self.ship_color_idx = (self.ship_color_idx - 1) % len(self.ship_colors)
-            elif cur == 1:
-                self.ship_shape_idx = (self.ship_shape_idx - 1) % len(self.ship_shapes)
             elif cur == 2:
-                self.start_weapon_idx = (self.start_weapon_idx - 1) % len(self.start_weapons)
+                self.ship_shape_idx = (self.ship_shape_idx - 1) % len(self.ship_shapes)
             elif cur == 3:
+                self.start_weapon_idx = (self.start_weapon_idx - 1) % len(self.start_weapons)
+            elif cur == 4:
                 self.start_upgrade_idx = (self.start_upgrade_idx - 1) % len(self.start_upgrade_options)
         if self.input.is_key_pressed(pygame.K_RIGHT) or self.input.is_key_pressed(pygame.K_d):
-            if cur == 0:
+            if cur == 1:
                 self.ship_color_idx = (self.ship_color_idx + 1) % len(self.ship_colors)
-            elif cur == 1:
-                self.ship_shape_idx = (self.ship_shape_idx + 1) % len(self.ship_shapes)
             elif cur == 2:
-                self.start_weapon_idx = (self.start_weapon_idx + 1) % len(self.start_weapons)
+                self.ship_shape_idx = (self.ship_shape_idx + 1) % len(self.ship_shapes)
             elif cur == 3:
+                self.start_weapon_idx = (self.start_weapon_idx + 1) % len(self.start_weapons)
+            elif cur == 4:
                 self.start_upgrade_idx = (self.start_upgrade_idx + 1) % len(self.start_upgrade_options)
         if (self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_SPACE)):
-            if cur == len(self.hangar_options) - 1:
+            if cur == 0:
+                self.config_mode = 'list'
+                self.config_list_idx = 0
+            elif cur == 5:
+                self._show_save_name_prompt = True
+                self._save_name_input = '我的方案'
+            elif cur == len(self.hangar_options) - 1:
                 self.state = self._prev_state
+
+    def _handle_save_name_input(self):
+        if self.input.is_key_pressed(pygame.K_ESCAPE):
+            self._show_save_name_prompt = False
+            return
+        for ev in self._text_events:
+            if ev.type == pygame.TEXTINPUT:
+                self._save_name_input += ev.text
+                self._save_name_input = self._save_name_input[:16]
+        if self.input.is_key_pressed(pygame.K_BACKSPACE):
+            self._save_name_input = self._save_name_input[:-1]
+        if self.input.is_key_pressed(pygame.K_RETURN):
+            name = self._save_name_input.strip()
+            if name:
+                self.ship_configs.save_current_as(
+                    name,
+                    self.ship_color_idx, self.ship_shape_idx,
+                    self.start_weapon_idx, self.start_upgrade_idx
+                )
+                self.audio.play_upgrade()
+            self._show_save_name_prompt = False
 
     def handle_bestiary_input(self):
         if self.input.is_key_pressed(pygame.K_ESCAPE):
@@ -512,7 +585,7 @@ class Game:
                         })
                         self.spawn_powerup(enemy.x, enemy.y)
                         self.difficulty.on_enemy_killed()
-                        self.bestiary.record_kill(enemy.type)
+                        self.bestiary.record_kill(enemy.type, self.difficulty.wave)
                     break
             if not bullet.alive:
                 continue
@@ -556,7 +629,7 @@ class Game:
                                 'size': 'boss', 'color': list(COLORS['boss'])
                             })
                         self.audio.play_explosion('boss')
-                        self.bestiary.record_boss_kill(self.boss.name)
+                        self.bestiary.record_boss_kill(self.boss.name, self.difficulty.wave)
                         self.difficulty.wave_complete = True
                         self.boss = None
         for player in self.players:
@@ -580,18 +653,21 @@ class Game:
                 if rects_collide(player.rect, enemy.rect):
                     if player.take_damage(enemy.damage):
                         self.difficulty.on_player_damage_taken(enemy.damage)
+                        self.bestiary.record_hit_by(enemy.type)
                     if enemy.type == 'kamikaze':
                         enemy.alive = False
                         self.particles.explosion(enemy.x, enemy.y, 'medium', enemy.color)
                         self.audio.play_explosion('medium')
                         self.difficulty.on_enemy_killed()
+                        self.bestiary.record_kill(enemy.type, self.difficulty.wave)
         for player in self.players:
             if not player.alive:
                 continue
             if self.boss and self.boss.alive and not self.boss.entrance:
                 if rects_collide(player.rect, self.boss.rect):
-                    player.take_damage(30)
-                    self.difficulty.on_player_damage_taken(30)
+                    if player.take_damage(30):
+                        self.difficulty.on_player_damage_taken(30)
+                        self.bestiary.record_hit_by_boss(self.boss.name)
         for player in self.players:
             if not player.alive:
                 continue
@@ -740,7 +816,10 @@ class Game:
             self.handle_upgrade_select_input()
             self.starfield.update(dt)
         elif self.state == GameState.HANGAR:
-            self.handle_hangar_input()
+            if getattr(self, '_show_save_name_prompt', False):
+                self._handle_save_name_input()
+            else:
+                self.handle_hangar_input()
             self.starfield.update(dt)
         elif self.state == GameState.BESTIARY:
             self.handle_bestiary_input()
@@ -754,7 +833,29 @@ class Game:
             self.replays.stop_replay()
             self.state = GameState.REPLAYS
             return
-        frame = self.replays.get_next_frame()
+        if self.input.is_key_pressed(pygame.K_SPACE):
+            self.replays.toggle_pause()
+        if self.input.is_key_pressed(pygame.K_RIGHT):
+            if self.input.is_key_down(pygame.K_LSHIFT) or self.input.is_key_down(pygame.K_RSHIFT):
+                self.replays.seek_forward(300)
+            else:
+                self.replays.seek_forward(60)
+        if self.input.is_key_pressed(pygame.K_LEFT):
+            if self.input.is_key_down(pygame.K_LSHIFT) or self.input.is_key_down(pygame.K_RSHIFT):
+                self.replays.seek_backward(300)
+            else:
+                self.replays.seek_backward(60)
+        if self.input.is_key_pressed(pygame.K_UP):
+            self.replays.set_speed(self.replays.play_speed * 1.5)
+        if self.input.is_key_pressed(pygame.K_DOWN):
+            self.replays.set_speed(self.replays.play_speed * 0.666)
+        if self.input.is_key_pressed(pygame.K_0):
+            self.replays.seek(0)
+        if self.input.is_key_pressed(pygame.K_PERIOD):
+            self._jump_to_next_keyframe(1)
+        if self.input.is_key_pressed(pygame.K_COMMA):
+            self._jump_to_next_keyframe(-1)
+        frame = self.replays.get_next_frame(dt)
         if frame is None:
             self.replays.stop_replay()
             self.replay_overlay_timer = 2000
@@ -764,6 +865,26 @@ class Game:
         self.starfield.update(dt * 0.5)
         self.particles.update(dt * 0.5)
         self.replay_overlay_timer += dt
+
+    def _jump_to_next_keyframe(self, direction):
+        keyframes = self.replays.get_keyframes()
+        if not keyframes:
+            return
+        cur = self.replays.get_current_idx()
+        best = None
+        best_dist = None
+        for kf in keyframes:
+            dist = kf['frame'] - cur
+            if direction > 0 and dist > 5:
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best = kf['frame']
+            elif direction < 0 and dist < -5:
+                if best_dist is None or dist > best_dist:
+                    best_dist = dist
+                    best = kf['frame']
+        if best is not None:
+            self.replays.seek(best)
 
     def _update_replay_from_frame(self, frame):
         if 'players' in frame:
@@ -861,6 +982,56 @@ class Game:
                 except Exception:
                     pass
 
+    def _draw_replay_ui(self):
+        total = self.replays.get_total_frames()
+        cur = self.replays.get_current_idx()
+        total_s = total / 60
+        cur_s = cur / 60
+        bg = pygame.Surface((SCREEN_WIDTH, 80), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 160))
+        self.screen.blit(bg, (0, SCREEN_HEIGHT - 80))
+        bar_x = 60
+        bar_y = SCREEN_HEIGHT - 50
+        bar_w = SCREEN_WIDTH - 120
+        bar_h = 14
+        pygame.draw.rect(self.screen, (40, 40, 60), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+        if total > 0:
+            ratio = cur / max(1, total - 1)
+            pygame.draw.rect(self.screen, (255, 200, 100),
+                             (bar_x, bar_y, int(bar_w * ratio), bar_h), border_radius=4)
+            keyframes = self.replays.get_keyframes()
+            kf_colors = {
+                'wave': (100, 200, 255),
+                'boss_intro': (255, 80, 80),
+                'boss_dead': (80, 255, 120),
+                'weapon': (255, 220, 0),
+            }
+            for kf in keyframes:
+                kx = bar_x + int(bar_w * (kf['frame'] / max(1, total - 1)))
+                c = kf_colors.get(kf.get('type', 'wave'), (200, 200, 200))
+                pygame.draw.polygon(self.screen, c, [
+                    (kx, bar_y - 8),
+                    (kx + 6, bar_y - 2),
+                    (kx - 6, bar_y - 2),
+                ])
+                pygame.draw.circle(self.screen, c, (kx, bar_y + bar_h + 8), 3)
+        pygame.draw.circle(self.screen, (255, 255, 255),
+                          (int(bar_x + bar_w * (cur / max(1, total - 1))), bar_y + bar_h // 2), 8)
+        pygame.draw.circle(self.screen, (255, 200, 100),
+                          (int(bar_x + bar_w * (cur / max(1, total - 1))), bar_y + bar_h // 2), 5)
+        time_str = f'{int(cur_s//60):02d}:{int(cur_s%60):02d} / {int(total_s//60):02d}:{int(total_s%60):02d}'
+        self.ui.draw_text(self.screen, time_str, 15, SCREEN_HEIGHT - 62,
+                          (255, 255, 255), self.ui.font_small)
+        speed = self.replays.play_speed
+        speed_str = f'速度: x{speed:.2f}'
+        if self.replays.paused:
+            speed_str = '[暂停] ' + speed_str
+        self.ui.draw_text(self.screen, speed_str, SCREEN_WIDTH - 130, SCREEN_HEIGHT - 62,
+                          (255, 220, 100), self.ui.font_small)
+        ctrl = '空格=暂停  ←→=跳转  Shift+←→=快跳  ↑↓=变速  ,.=跳关键帧  0=开始  ESC=退出'
+        self.ui.draw_text(self.screen, ctrl, SCREEN_WIDTH // 2, SCREEN_HEIGHT - 25,
+                          (180, 180, 200), self.ui.font_small, center=True)
+
     def draw(self):
         self.screen.fill(COLORS['bg'])
         self.starfield.draw(self.screen)
@@ -904,6 +1075,28 @@ class Game:
                 max_mult = max((p.score_multiplier for p in self.players), default=1.0)
                 wave = self.difficulty.wave
             self.ui.draw_score(self.screen, total_score, max_combo, max_mult, wave)
+            if self.state != GameState.REPLAY_PLAYING:
+                build_y = 20
+                for i, p in enumerate(self.players):
+                    if not p.alive or not p.build_type:
+                        continue
+                    build_x = SCREEN_WIDTH - 20
+                    build_name = p.build_name
+                    build_color = p.build_color
+                    icon_rect = pygame.Rect(build_x - 180, build_y, 24, 24)
+                    pygame.draw.rect(self.screen, build_color, icon_rect, border_radius=6)
+                    pygame.draw.rect(self.screen, (255, 255, 255), icon_rect, 2, border_radius=6)
+                    self.ui.draw_text(self.screen, build_name[:2],
+                                     icon_rect.centerx, icon_rect.centery - 7,
+                                     (0, 0, 0), self.ui.font_small, center=True)
+                    self.ui.draw_text(self.screen, build_name,
+                                     build_x - 150, build_y + 2,
+                                     build_color, self.ui.font_small)
+                    upgrade_count = len(p.upgrades)
+                    self.ui.draw_text(self.screen, f'({upgrade_count}强化)',
+                                     build_x - 150, build_y + 24,
+                                     (180, 180, 200), self.ui.font_small)
+                    build_y += 60
             if self.boss and self.boss.alive:
                 self.ui.draw_boss_health(self.screen, self.boss)
             for p in self.players:
@@ -911,9 +1104,7 @@ class Game:
                     self.ui.draw_slowmo_indicator(self.screen, True, p.slowmo_timer, SLOWMO_DURATION)
                     break
             if self.state == GameState.REPLAY_PLAYING:
-                pygame.draw.rect(self.screen, (0, 0, 0, 150), (0, 0, 180, 40))
-                self.ui.draw_text(self.screen, '回 放 中  [ESC 退出]',
-                                  10, 12, (255, 200, 100), self.ui.font_small)
+                self._draw_replay_ui()
         if self.state == GameState.MENU:
             self.ui.draw_menu(self.screen, '太空射击', self.menu_options, self.menu_idx)
             self.ui.draw_controls(self.screen, 40, SCREEN_HEIGHT - 140, is_p2=False)
@@ -1071,6 +1262,12 @@ class Game:
         cx = SCREEN_WIDTH // 2
         self.ui.draw_text_with_shadow(self.screen, '机库', cx, 60,
                                        (0, 220, 255), self.ui.font_large, center=True)
+        if self._show_save_name_prompt:
+            self._draw_save_name_dialog()
+            return
+        if self.config_mode == 'list':
+            self._draw_config_list()
+            return
         preview_x = cx - 200
         preview_y = 250
         preview_color = self.ship_colors[self.ship_color_idx][0]
@@ -1095,29 +1292,34 @@ class Game:
                           (255, 220, 150), self.ui.font_small, center=True)
         self.ui.draw_text(self.screen, f'伤害: {int(100 * stats["damage_mult"])}%', preview_x, stat_y + 48,
                           (255, 150, 150), self.ui.font_small, center=True)
+        if self.ship_configs.selected:
+            self.ui.draw_text(self.screen, f'当前方案: {self.ship_configs.selected}',
+                              preview_x, stat_y + 80, (255, 220, 100), self.ui.font_small, center=True)
         panel_x = cx + 120
         panel_y = 130
+        wp_names = {'laser': '激光炮', 'shotgun': '霰弹枪',
+                    'missile': '追踪导弹', 'plasma': '等离子炮'}
         for i, opt in enumerate(self.hangar_options):
-            item_y = panel_y + i * 50
+            item_y = panel_y + i * 45
             color = (255, 255, 255) if i == self.hangar_idx else (150, 150, 180)
             if i == 0:
-                val = self.ship_colors[self.ship_color_idx][1]
+                val = self.ship_configs.selected if self.ship_configs.selected else '---'
             elif i == 1:
-                val = self.ship_shapes[self.ship_shape_idx]
+                val = self.ship_colors[self.ship_color_idx][1]
             elif i == 2:
-                wp_names = {'laser': '激光炮', 'shotgun': '霰弹枪',
-                            'missile': '追踪导弹', 'plasma': '等离子炮'}
-                val = wp_names.get(self.start_weapons[self.start_weapon_idx], '未知')
+                val = self.ship_shapes[self.ship_shape_idx]
             elif i == 3:
+                val = wp_names.get(self.start_weapons[self.start_weapon_idx], '未知')
+            elif i == 4:
                 val = self.start_upgrade_options[self.start_upgrade_idx]
             else:
                 val = ''
             arrow_l = '< ' if i == self.hangar_idx else '  '
             arrow_r = ' >' if i == self.hangar_idx else '  '
-            display = f'{arrow_l}{opt}' + (f': {val}' if i < 4 else '') + arrow_r
+            display = f'{arrow_l}{opt}' + (f': {val}' if i < 5 else '') + arrow_r
             self.ui.draw_text(self.screen, display, panel_x, item_y, color,
                               self.ui.font_medium, center=True)
-        self.ui.draw_text(self.screen, '按 ←/→ 更改  ↓/↑ 切换  ESC 返回',
+        self.ui.draw_text(self.screen, 'Tab 切方案列表  ←/→ 更改  ↓/↑ 切换  ESC 返回',
                           cx, SCREEN_HEIGHT - 50, (100, 150, 200), self.ui.font_small, center=True)
         route_desc = [
             '均衡强化：初始武器 +1级',
@@ -1125,10 +1327,60 @@ class Game:
             '速度优先：速度+散热',
             '防御优先：护盾+伤害',
         ]
-        self.ui.draw_text(self.screen, '升级路线效果：', panel_x, panel_y + 230,
+        self.ui.draw_text(self.screen, '升级路线效果：', panel_x, panel_y + 250,
                           (200, 200, 255), self.ui.font_small, center=True)
-        self.ui.draw_text(self.screen, route_desc[self.start_upgrade_idx], panel_x, panel_y + 255,
+        self.ui.draw_text(self.screen, route_desc[self.start_upgrade_idx], panel_x, panel_y + 275,
                           (255, 220, 150), self.ui.font_small, center=True)
+
+    def _draw_config_list(self):
+        cx = SCREEN_WIDTH // 2
+        configs = self.ship_configs.list_configs()
+        self.ui.draw_text(self.screen, '选择配置方案  [Tab 返回]', cx, 120,
+                          (200, 200, 255), self.ui.font_medium, center=True)
+        options = configs + ['返回自定义']
+        list_y = 180
+        for i, name in enumerate(options):
+            iy = list_y + i * 42
+            selected = (i == self.config_list_idx)
+            bg_c = (40, 40, 70) if selected else (25, 25, 45)
+            pygame.draw.rect(self.screen, bg_c, (cx - 240, iy - 2, 480, 38), border_radius=6)
+            if selected:
+                pygame.draw.rect(self.screen, (255, 220, 100), (cx - 240, iy - 2, 480, 38), 2, border_radius=6)
+            color = (255, 255, 255) if selected else (180, 180, 200)
+            display = name
+            if name == self.ship_configs.selected:
+                display = '★ ' + display + ' (选中)'
+                color = (255, 220, 100)
+            self.ui.draw_text(self.screen, display, cx - 220, iy + 6, color, self.ui.font_small)
+            if i < len(configs):
+                cfg = self.ship_configs.get_config(name)
+                if cfg and 'desc' in cfg:
+                    self.ui.draw_text(self.screen, cfg['desc'][:30], cx + 30, iy + 6,
+                                      (150, 200, 255), self.ui.font_small)
+        self.ui.draw_text(self.screen,
+                          '回车确认  Delete/Backspace 删除自定义方案',
+                          cx, SCREEN_HEIGHT - 50, (150, 150, 180), self.ui.font_small, center=True)
+
+    def _draw_save_name_dialog(self):
+        cx = SCREEN_WIDTH // 2
+        cy = SCREEN_HEIGHT // 2
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        pygame.draw.rect(self.screen, (40, 40, 70), (cx - 220, cy - 80, 440, 160), border_radius=12)
+        pygame.draw.rect(self.screen, (255, 220, 100), (cx - 220, cy - 80, 440, 160), 2, border_radius=12)
+        self.ui.draw_text(self.screen, '保存当前配置为', cx, cy - 45,
+                          (255, 255, 255), self.ui.font_medium, center=True)
+        input_box_y = cy
+        box_w = 340
+        box_h = 40
+        pygame.draw.rect(self.screen, (20, 20, 40), (cx - box_w / 2, input_box_y - box_h / 2, box_w, box_h), border_radius=6)
+        pygame.draw.rect(self.screen, (100, 200, 255), (cx - box_w / 2, input_box_y - box_h / 2, box_w, box_h), 2, border_radius=6)
+        cursor = '|' if (pygame.time.get_ticks() // 400) % 2 == 0 else ' '
+        self.ui.draw_text(self.screen, self._save_name_input + cursor, cx, input_box_y - 6,
+                          (255, 255, 255), self.ui.font_medium, center=True)
+        self.ui.draw_text(self.screen, 'ESC 取消  回车保存', cx, cy + 55,
+                          (180, 180, 200), self.ui.font_small, center=True)
 
     def _draw_bestiary(self):
         cx = SCREEN_WIDTH // 2
@@ -1183,12 +1435,35 @@ class Game:
                               (255, 220, 100), self.ui.font_medium)
             desc_lines = self._wrap_text(desc, 400)
             for li, line in enumerate(desc_lines):
-                self.ui.draw_text(self.screen, line, detail_x, detail_y + 50 + li * 30,
+                self.ui.draw_text(self.screen, line, detail_x, detail_y + 45 + li * 28,
                                   (200, 200, 220), self.ui.font_small)
             if cur_key in data_map:
-                kills = data_map[cur_key].get('kills', 0)
-                self.ui.draw_text(self.screen, f'总击败数: {kills}', detail_x, detail_y + 180,
-                                  (150, 255, 150), self.ui.font_medium)
+                data = data_map[cur_key]
+                kills = data.get('kills', 0)
+                first_wave = data.get('first_wave', '-')
+                best_wave = data.get('best_kill_wave', 0)
+                hit_count = data.get('hit_count', 0)
+                stat_y = detail_y + 130
+                self.ui.draw_text(self.screen, f'首次遇到: 第{first_wave}波', detail_x, stat_y,
+                                  (180, 220, 255), self.ui.font_small)
+                if best_wave > 0:
+                    self.ui.draw_text(self.screen, f'最高击败: 第{best_wave}波', detail_x, stat_y + 28,
+                                      (255, 180, 100), self.ui.font_small)
+                self.ui.draw_text(self.screen, f'总击败数: {kills}', detail_x, stat_y + 56,
+                                  (150, 255, 150), self.ui.font_small)
+                self.ui.draw_text(self.screen, f'被它打中: {hit_count}次', detail_x, stat_y + 84,
+                                  (255, 150, 150), self.ui.font_small)
+            if self.bestiary_tab == 1 and 'phases' in info:
+                phases = info['phases']
+                phase_y = detail_y + 240
+                self.ui.draw_text(self.screen, '攻击阶段：', detail_x, phase_y,
+                                  (255, 150, 255), self.ui.font_small)
+                for pi, phase in enumerate(phases):
+                    phase_lines = self._wrap_text(phase, 380)
+                    for li, line in enumerate(phase_lines):
+                        indent = '  ' if li > 0 else ''
+                        self.ui.draw_text(self.screen, indent + line, detail_x, phase_y + 30 + pi * 50 + li * 22,
+                                          (220, 200, 240), self.ui.font_small)
         else:
             self.ui.draw_text(self.screen, '未发现', detail_x, detail_y,
                               (100, 100, 120), self.ui.font_medium)
