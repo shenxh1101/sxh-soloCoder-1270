@@ -127,3 +127,59 @@ class ReplayManager:
     def stop_replay(self):
         self.replaying = False
         self.replay_data = None
+
+
+class BestiaryManager:
+    def __init__(self):
+        self.data = {'enemies': {}, 'bosses': {}}
+        self._load()
+
+    def _load(self):
+        try:
+            if os.path.exists(BESTIARY_FILE):
+                with open(BESTIARY_FILE, 'r', encoding='utf-8') as f:
+                    self.data = json.load(f)
+        except Exception:
+            self.data = {'enemies': {}, 'bosses': {}}
+
+    def _save(self):
+        try:
+            os.makedirs(os.path.dirname(BESTIARY_FILE), exist_ok=True)
+            with open(BESTIARY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def record_encounter(self, enemy_type):
+        if enemy_type not in self.data['enemies']:
+            self.data['enemies'][enemy_type] = {'kills': 0, 'encountered': True}
+        else:
+            self.data['enemies'][enemy_type]['encountered'] = True
+
+    def record_kill(self, enemy_type):
+        self.record_encounter(enemy_type)
+        self.data['enemies'][enemy_type]['kills'] = self.data['enemies'].get(enemy_type, {}).get('kills', 0) + 1
+        self._save()
+
+    def record_boss(self, boss_name):
+        if boss_name not in self.data['bosses']:
+            self.data['bosses'][boss_name] = {'kills': 0, 'encountered': True}
+        else:
+            self.data['bosses'][boss_name]['encountered'] = True
+
+    def record_boss_kill(self, boss_name):
+        self.record_boss(boss_name)
+        self.data['bosses'][boss_name]['kills'] = self.data['bosses'].get(boss_name, {}).get('kills', 0) + 1
+        self._save()
+
+    def get_enemy_data(self):
+        return self.data['enemies']
+
+    def get_boss_data(self):
+        return self.data['bosses']
+
+    def is_encountered(self, key, is_boss=False):
+        if is_boss:
+            return key in self.data['bosses'] and self.data['bosses'][key].get('encountered', False)
+        else:
+            return key in self.data['enemies'] and self.data['enemies'][key].get('encountered', False)

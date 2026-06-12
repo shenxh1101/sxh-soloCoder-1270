@@ -32,7 +32,16 @@ class Player:
         self.weapon_order = ['laser', 'shotgun', 'missile', 'plasma']
         self.color = COLORS['player'] if player_id == 1 else COLORS['player2']
         self.shape_type = 0
+        self.damage_mult = 1.0
         self.speed_mult = 1.0
+        self.heat_mult = 1.0
+        self.upgrades = []
+        self.extra_pellets = 0
+        stats = SHIP_SHAPE_STATS[self.shape_type]
+        self.max_health = int(100 * stats['health_mult'])
+        self.health = self.max_health
+        self.speed_mult = stats['speed_mult']
+        self.damage_mult = stats['damage_mult']
         self.bullets = []
         self.is_firing = False
         self.thrust_angle = 270
@@ -131,75 +140,78 @@ class Player:
         self.score += 50
 
     def update(self, dt, keys, enemies, enemy_bullets, particle_system, current_time):
-        if not self.alive:
-            return
-        time_scale = 0.3 if self.slowmo_active else 1.0
-        effective_dt = dt * time_scale
-        for w in self.weapons.values():
-            w.update(effective_dt)
-        if self.slowmo_active:
-            self.slowmo_timer -= dt
-            if self.slowmo_timer <= 0:
-                self.slowmo_active = False
-        if self.dodge_frame > 0:
-            self.dodge_frame -= 1
-        if self.invincible:
-            self.invincible_time -= dt
-            if self.invincible_time <= 0:
-                self.invincible = False
-        if self.combo_timer > 0:
-            self.combo_timer -= dt
-            if self.combo_timer <= 0:
-                self.combo = 0
-                self.score_multiplier = 1.0
-        self.engine_flame = (self.engine_flame + dt / 50) % (math.pi * 2)
-        if self.id == 1:
-            move_x = 0
-            move_y = 0
-            if keys.get(pygame.K_LEFT) or keys.get(pygame.K_a):
-                move_x -= 1
-            if keys.get(pygame.K_RIGHT) or keys.get(pygame.K_d):
-                move_x += 1
-            if keys.get(pygame.K_UP) or keys.get(pygame.K_w):
-                move_y -= 1
-            if keys.get(pygame.K_DOWN) or keys.get(pygame.K_s):
-                move_y += 1
-            self.is_firing = keys.get(pygame.K_SPACE, False) or keys.get(pygame.K_z, False)
-            if keys.get(pygame.K_x, False) or keys.get(pygame.K_LSHIFT, False):
-                self.current_weapon.start_charging()
+        try:
+            if not self.alive:
+                return
+            time_scale = 0.3 if self.slowmo_active else 1.0
+            effective_dt = dt * time_scale
+            for w in self.weapons.values():
+                w.update(effective_dt)
+            if self.slowmo_active:
+                self.slowmo_timer -= dt
+                if self.slowmo_timer <= 0:
+                    self.slowmo_active = False
+            if self.dodge_frame > 0:
+                self.dodge_frame -= 1
+            if self.invincible:
+                self.invincible_time -= dt
+                if self.invincible_time <= 0:
+                    self.invincible = False
+            if self.combo_timer > 0:
+                self.combo_timer -= dt
+                if self.combo_timer <= 0:
+                    self.combo = 0
+                    self.score_multiplier = 1.0
+            self.engine_flame = (self.engine_flame + dt / 50) % (math.pi * 2)
+            if self.id == 1:
+                move_x = 0
+                move_y = 0
+                if keys.get(pygame.K_LEFT) or keys.get(pygame.K_a):
+                    move_x -= 1
+                if keys.get(pygame.K_RIGHT) or keys.get(pygame.K_d):
+                    move_x += 1
+                if keys.get(pygame.K_UP) or keys.get(pygame.K_w):
+                    move_y -= 1
+                if keys.get(pygame.K_DOWN) or keys.get(pygame.K_s):
+                    move_y += 1
+                self.is_firing = keys.get(pygame.K_SPACE, False) or keys.get(pygame.K_z, False)
+                if keys.get(pygame.K_x, False) or keys.get(pygame.K_LSHIFT, False):
+                    self.current_weapon.start_charging()
+                else:
+                    if self.current_weapon.type == 'plasma' and self.current_weapon.is_charging:
+                        self.is_firing = True
             else:
-                if self.current_weapon.type == 'plasma' and self.current_weapon.is_charging:
-                    self.is_firing = True
-        else:
-            move_x = 0
-            move_y = 0
-            if keys.get(pygame.K_j):
-                move_x -= 1
-            if keys.get(pygame.K_l):
-                move_x += 1
-            if keys.get(pygame.K_i):
-                move_y -= 1
-            if keys.get(pygame.K_k):
-                move_y += 1
-            self.is_firing = keys.get(pygame.K_RETURN, False)
-        if move_x != 0 and move_y != 0:
-            length = math.hypot(move_x, move_y)
-            move_x /= length
-            move_y /= length
-        self.x += move_x * self.speed * effective_dt / 1000 * self.speed_mult
-        self.y += move_y * self.speed * effective_dt / 1000 * self.speed_mult
-        self.x = clamp(self.x, self.width / 2, SCREEN_WIDTH - self.width / 2)
-        self.y = clamp(self.y, self.height / 2, SCREEN_HEIGHT - self.height / 2)
-        if move_x != 0 or move_y != 0:
-            self.thrust_angle = math.degrees(math.atan2(-move_y, -move_x)) + 90
-            particle_system.thrust(
-                self.x - math.sin(math.radians(self.thrust_angle)) * 20,
-                self.y + math.cos(math.radians(self.thrust_angle)) * 20,
-                self.thrust_angle + 180,
-                self.color
-            )
-        else:
-            particle_system.thrust(self.x, self.y + 20, 90, self.color)
+                move_x = 0
+                move_y = 0
+                if keys.get(pygame.K_j):
+                    move_x -= 1
+                if keys.get(pygame.K_l):
+                    move_x += 1
+                if keys.get(pygame.K_i):
+                    move_y -= 1
+                if keys.get(pygame.K_k):
+                    move_y += 1
+                self.is_firing = keys.get(pygame.K_RETURN, False)
+            if move_x != 0 and move_y != 0:
+                length = math.hypot(move_x, move_y)
+                move_x /= length
+                move_y /= length
+            self.x += move_x * self.speed * effective_dt / 1000 * self.speed_mult
+            self.y += move_y * self.speed * effective_dt / 1000 * self.speed_mult
+            self.x = clamp(self.x, self.width / 2, SCREEN_WIDTH - self.width / 2)
+            self.y = clamp(self.y, self.height / 2, SCREEN_HEIGHT - self.height / 2)
+            if move_x != 0 or move_y != 0:
+                self.thrust_angle = math.degrees(math.atan2(-move_y, -move_x)) + 90
+                particle_system.thrust(
+                    self.x - math.sin(math.radians(self.thrust_angle)) * 20,
+                    self.y + math.cos(math.radians(self.thrust_angle)) * 20,
+                    self.thrust_angle + 180,
+                    self.color
+                )
+            else:
+                particle_system.thrust(self.x, self.y + 20, 90, self.color)
+        except Exception:
+            pass
 
     def fire(self, current_time):
         if not self.alive:
@@ -208,33 +220,38 @@ class Player:
             bullets = self.current_weapon.fire(
                 self.x, self.y - self.height / 2, -math.pi / 2, current_time
             )
+            for b in bullets:
+                b.damage *= self.damage_mult
             return bullets
         return []
 
     def draw(self, surface):
-        if not self.alive:
-            return
-        if self.invincible and (pygame.time.get_ticks() // 100) % 2 == 0:
-            return
-        if self.dodge_frame > 0:
-            for i in range(3):
-                offset = (3 - i) * 8
-                alpha = 80 - i * 20
-                ghost_surf = pygame.Surface((self.width + 20, self.height + 20), pygame.SRCALPHA)
-                c = (self.color[0], self.color[1], self.color[2], alpha)
-                self._draw_ship_shape(ghost_surf, (self.width + 20) / 2, (self.height + 20) / 2, c)
-                surface.blit(ghost_surf, (self.x - (self.width + 20) / 2 - offset,
-                                          self.y - (self.height + 20) / 2))
-        ship_surf = pygame.Surface((self.width + 20, self.height + 20), pygame.SRCALPHA)
-        self._draw_ship_shape(ship_surf, (self.width + 20) / 2, (self.height + 20) / 2, self.color)
-        surface.blit(ship_surf, (self.x - (self.width + 20) / 2, self.y - (self.height + 20) / 2))
-        flame_len = 12 + math.sin(self.engine_flame) * 4
-        flame_color = (255, 180 + int(50 * math.sin(self.engine_flame * 2)), 50)
-        pygame.draw.polygon(surface, flame_color, [
-            (self.x - 6, self.y + self.height / 2),
-            (self.x, self.y + self.height / 2 + flame_len),
-            (self.x + 6, self.y + self.height / 2),
-        ])
+        try:
+            if not self.alive:
+                return
+            if self.invincible and (pygame.time.get_ticks() // 100) % 2 == 0:
+                return
+            if self.dodge_frame > 0:
+                for i in range(3):
+                    offset = (3 - i) * 8
+                    alpha = 80 - i * 20
+                    ghost_surf = pygame.Surface((self.width + 20, self.height + 20), pygame.SRCALPHA)
+                    c = (self.color[0], self.color[1], self.color[2], alpha)
+                    self._draw_ship_shape(ghost_surf, (self.width + 20) / 2, (self.height + 20) / 2, c)
+                    surface.blit(ghost_surf, (self.x - (self.width + 20) / 2 - offset,
+                                              self.y - (self.height + 20) / 2))
+            ship_surf = pygame.Surface((self.width + 20, self.height + 20), pygame.SRCALPHA)
+            self._draw_ship_shape(ship_surf, (self.width + 20) / 2, (self.height + 20) / 2, self.color)
+            surface.blit(ship_surf, (self.x - (self.width + 20) / 2, self.y - (self.height + 20) / 2))
+            flame_len = 12 + math.sin(self.engine_flame) * 4
+            flame_color = (255, 180 + int(50 * math.sin(self.engine_flame * 2)), 50)
+            pygame.draw.polygon(surface, flame_color, [
+                (self.x - 6, self.y + self.height / 2),
+                (self.x, self.y + self.height / 2 + flame_len),
+                (self.x + 6, self.y + self.height / 2),
+            ])
+        except Exception:
+            pass
 
     def _draw_ship_shape(self, surf, cx, cy, color):
         w, h = self.width, self.height
@@ -290,6 +307,23 @@ class Player:
 
     def upgrade_current_weapon(self):
         return self.current_weapon.upgrade()
+
+    def apply_upgrade(self, upgrade_id):
+        self.upgrades.append(upgrade_id)
+        if upgrade_id == 'weapon_upgrade':
+            self.upgrade_current_weapon()
+        elif upgrade_id == 'shield_up':
+            self.max_health += 25
+            self.health = self.max_health
+        elif upgrade_id == 'speed_up':
+            self.speed_mult *= 1.2
+        elif upgrade_id == 'heat_down':
+            for w in self.weapons.values():
+                w.cooldown_rate *= 1.3
+        elif upgrade_id == 'damage_up':
+            self.damage_mult *= 1.15
+        elif upgrade_id == 'multi_shot':
+            self.extra_pellets += 1
 
     def get_time_scale(self):
         return 0.3 if self.slowmo_active else 1.0

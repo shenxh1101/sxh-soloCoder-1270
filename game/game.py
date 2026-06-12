@@ -1,5 +1,6 @@
 import random
 import math
+import copy
 from game.config import *
 from game.utils import StarField, circle_rect_collide, rects_collide
 from game.particles import ParticleSystem
@@ -9,7 +10,7 @@ from game.boss import Boss
 from game.weapons import Bullet
 from game.audio import SoundManager
 from game.difficulty import DifficultyManager
-from game.score import HighScoreManager, ReplayManager
+from game.score import HighScoreManager, ReplayManager, BestiaryManager
 from game.ui import UIManager
 from game.input import InputManager
 
@@ -26,6 +27,9 @@ class GameState:
     WAVE_NOTIFY = 'wave_notify'
     BOSS_INTRO = 'boss_intro'
     CUSTOMIZE = 'customize'
+    HANGAR = 'hangar'
+    UPGRADE_SELECT = 'upgrade_select'
+    BESTIARY = 'bestiary'
 
 
 class Game:
@@ -36,14 +40,20 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
         self.state = GameState.MENU
-        self.menu_options = ['开始游戏', '双人合作', '飞船自定义', '高分榜', '回放', '退出']
+        self.menu_options = ['开始游戏', '双人合作', '机库', '敌人图鉴', '高分榜', '回放', '退出']
         self.menu_idx = 0
+        self.hangar_idx = 0
+        self.hangar_options = ['颜色', '外形', '初始武器', '默认升级路线', '返回']
+        self.hangar_sub_idx = [0, 0, 0, 0]
         self.highscore_options = ['返回']
         self.highscore_idx = 0
         self.replay_options = ['返回']
         self.replay_idx = 0
         self.customize_idx = 0
         self.customize_options = ['颜色', '外形', '初始武器', '确认']
+        self.bestiary_idx = 0
+        self.bestiary_tab = 0
+        self.bestiary_tabs = ['敌人', 'Boss']
         self.ship_colors = [
             ((0, 220, 255), '科技蓝'),
             ((255, 165, 0), '烈焰橙'),
@@ -57,12 +67,17 @@ class Game:
         self.ship_shape_idx = 0
         self.start_weapon_idx = 0
         self.start_weapons = ['laser', 'shotgun', 'missile', 'plasma']
+        self.start_upgrade_idx = 0
+        self.start_upgrade_options = ['均衡强化', '火力优先', '速度优先', '防御优先']
+        self.upgrade_options_current = []
+        self.upgrade_select_idx = 0
         self.starfield = StarField()
         self.particles = ParticleSystem()
         self.audio = SoundManager()
         self.difficulty = DifficultyManager()
         self.highscores = HighScoreManager()
         self.replays = ReplayManager()
+        self.bestiary = BestiaryManager()
         self.ui = UIManager()
         self.input = InputManager()
         self.players = []
@@ -78,6 +93,7 @@ class Game:
         self.last_score = 0
         self.last_wave = 1
         self.replay_overlay_timer = 0
+        self._prev_state = GameState.MENU
         self._init_powerup_drop_chance()
 
     def _init_powerup_drop_chance(self):
@@ -90,6 +106,7 @@ class Game:
         p1.shape_type = self.ship_shape_idx
         start_wep = self.start_weapons[self.start_weapon_idx]
         p1.current_weapon_idx = p1.weapon_order.index(start_wep)
+        self._apply_start_upgrades(p1)
         self.players = [p1]
         if two_player:
             p2 = Player(2)
@@ -98,6 +115,7 @@ class Game:
                         255 - self.ship_colors[self.ship_color_idx][0][2])
             p2.shape_type = self.ship_shape_idx
             p2.current_weapon_idx = p2.weapon_order.index(start_wep)
+            self._apply_start_upgrades(p2)
             self.players.append(p2)
         self.enemies = []
         self.enemy_bullets = []
@@ -109,6 +127,7 @@ class Game:
         self.replay_overlay_timer = 0
         if self.difficulty.wave % WAVE_BOSS_INTERVAL == 0:
             self.boss = Boss(self.difficulty.wave)
+            self.bestiary.record_boss(self.boss.name)
             self.state = GameState.BOSS_INTRO
             self.boss_intro_timer = 3000
             self.audio.play_boss_intro()
@@ -118,6 +137,20 @@ class Game:
         if not self.replays.replaying:
             self.replays.start_recording()
 
+    def _apply_start_upgrades(self, player):
+        route = self.start_upgrade_idx
+        if route == 0:
+            player.apply_upgrade('weapon_upgrade')
+        elif route == 1:
+            player.apply_upgrade('weapon_upgrade')
+            player.apply_upgrade('damage_up')
+        elif route == 2:
+            player.apply_upgrade('speed_up')
+            player.apply_upgrade('heat_down')
+        elif route == 3:
+            player.apply_upgrade('shield_up')
+            player.apply_upgrade('damage_up')
+
     def start_new_wave(self):
         self.difficulty.start_new_wave()
         self.enemies = []
@@ -126,6 +159,7 @@ class Game:
         self.spawn_timer = 0
         if self.difficulty.wave % WAVE_BOSS_INTERVAL == 0:
             self.boss = Boss(self.difficulty.wave)
+            self.bestiary.record_boss(self.boss.name)
             self.state = GameState.BOSS_INTRO
             self.boss_intro_timer = 3000
             self.audio.play_boss_intro()
@@ -135,11 +169,35 @@ class Game:
             self.wave_notify_timer = 2000
             self.state = GameState.WAVE_NOTIFY
 
+    def _start_upgrade_select(self):
+        all_opts = UPGRADE_OPTIONS[:]
+        random.shuffle(all_opts)
+        self.upgrade_options_current = all_opts[:3]
+        self.upgrade_select_idx = 0
+        self.state = GameState.UPGRADE_SELECT
+
+    def _apply_upgrade_to_all(self, upgrade_id):
+        for p in self.players:
+            if p.alive:
+                p.apply_upgrade(upgrade_id)
+        self.audio.play_upgrade()
+
+    def handle_upgrade_select_input(self):
+        if self.input.is_key_pressed(pygame.K_LEFT) or self.input.is_key_pressed(pygame.K_a):
+            self.upgrade_select_idx = (self.upgrade_select_idx - 1) % len(self.upgrade_options_current)
+        if self.input.is_key_pressed(pygame.K_RIGHT) or self.input.is_key_pressed(pygame.K_d):
+            self.upgrade_select_idx = (self.upgrade_select_idx + 1) % len(self.upgrade_options_current)
+        if self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_SPACE):
+            if self.upgrade_options_current:
+                self._apply_upgrade_to_all(self.upgrade_options_current[self.upgrade_select_idx]['id'])
+            self.start_new_wave()
+
     def spawn_enemy(self):
         enemy_type = self.difficulty.pick_enemy_type()
         enemy = Enemy(enemy_type, difficulty=self.difficulty.difficulty_score)
         self.enemies.append(enemy)
         self.difficulty.enemies_spawned_in_wave += 1
+        self.bestiary.record_encounter(enemy_type)
 
     def spawn_powerup(self, x, y):
         if random.random() > self.powerup_chance:
@@ -174,15 +232,70 @@ class Game:
             elif self.menu_idx == 1:
                 self.reset_game(two_player=True)
             elif self.menu_idx == 2:
-                self.state = GameState.CUSTOMIZE
-                self.customize_idx = 0
+                self._prev_state = GameState.MENU
+                self.state = GameState.HANGAR
+                self.hangar_idx = 0
             elif self.menu_idx == 3:
-                self.state = GameState.HIGHSCORES
+                self._prev_state = GameState.MENU
+                self.state = GameState.BESTIARY
+                self.bestiary_idx = 0
+                self.bestiary_tab = 0
             elif self.menu_idx == 4:
+                self._prev_state = GameState.MENU
+                self.state = GameState.HIGHSCORES
+            elif self.menu_idx == 5:
+                self._prev_state = GameState.MENU
                 self.state = GameState.REPLAYS
                 self._refresh_replay_list()
-            elif self.menu_idx == 5:
+            elif self.menu_idx == 6:
                 self.running = False
+
+    def handle_hangar_input(self):
+        if self.input.is_key_pressed(pygame.K_ESCAPE):
+            self.state = self._prev_state
+            return
+        if self.input.is_key_pressed(pygame.K_UP) or self.input.is_key_pressed(pygame.K_w):
+            self.hangar_idx = (self.hangar_idx - 1) % len(self.hangar_options)
+        if self.input.is_key_pressed(pygame.K_DOWN) or self.input.is_key_pressed(pygame.K_s):
+            self.hangar_idx = (self.hangar_idx + 1) % len(self.hangar_options)
+        cur = self.hangar_idx
+        if self.input.is_key_pressed(pygame.K_LEFT) or self.input.is_key_pressed(pygame.K_a):
+            if cur == 0:
+                self.ship_color_idx = (self.ship_color_idx - 1) % len(self.ship_colors)
+            elif cur == 1:
+                self.ship_shape_idx = (self.ship_shape_idx - 1) % len(self.ship_shapes)
+            elif cur == 2:
+                self.start_weapon_idx = (self.start_weapon_idx - 1) % len(self.start_weapons)
+            elif cur == 3:
+                self.start_upgrade_idx = (self.start_upgrade_idx - 1) % len(self.start_upgrade_options)
+        if self.input.is_key_pressed(pygame.K_RIGHT) or self.input.is_key_pressed(pygame.K_d):
+            if cur == 0:
+                self.ship_color_idx = (self.ship_color_idx + 1) % len(self.ship_colors)
+            elif cur == 1:
+                self.ship_shape_idx = (self.ship_shape_idx + 1) % len(self.ship_shapes)
+            elif cur == 2:
+                self.start_weapon_idx = (self.start_weapon_idx + 1) % len(self.start_weapons)
+            elif cur == 3:
+                self.start_upgrade_idx = (self.start_upgrade_idx + 1) % len(self.start_upgrade_options)
+        if (self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_SPACE)):
+            if cur == len(self.hangar_options) - 1:
+                self.state = self._prev_state
+
+    def handle_bestiary_input(self):
+        if self.input.is_key_pressed(pygame.K_ESCAPE):
+            self.state = self._prev_state
+            return
+        if self.input.is_key_pressed(pygame.K_TAB) or self.input.is_key_pressed(pygame.K_q):
+            self.bestiary_tab = (self.bestiary_tab + 1) % 2
+            self.bestiary_idx = 0
+        if self.bestiary_tab == 0:
+            items = ENEMY_TYPES
+        else:
+            items = BOSS_NAMES
+        if self.input.is_key_pressed(pygame.K_UP) or self.input.is_key_pressed(pygame.K_w):
+            self.bestiary_idx = (self.bestiary_idx - 1) % len(items)
+        if self.input.is_key_pressed(pygame.K_DOWN) or self.input.is_key_pressed(pygame.K_s):
+            self.bestiary_idx = (self.bestiary_idx + 1) % len(items)
 
     def handle_customize_input(self):
         if self.input.is_key_pressed(pygame.K_ESCAPE):
@@ -294,21 +407,45 @@ class Game:
             'time': pygame.time.get_ticks(),
             'players': [],
             'enemies': [],
+            'player_bullets': [],
+            'enemy_bullets': [],
             'boss': None,
             'score': sum(p.score for p in self.players),
             'wave': self.difficulty.wave,
+            'explosions': [],
         }
         for p in self.players:
             frame['players'].append({
                 'x': p.x, 'y': p.y, 'alive': p.alive,
                 'health': p.health, 'weapon': p.weapon_order[p.current_weapon_idx],
+                'weapon_level': p.current_weapon.level,
+                'shape_type': getattr(p, 'shape_type', 0),
+                'color': list(p.color),
             })
+            for b in p.bullets:
+                if b.alive:
+                    frame['player_bullets'].append({
+                        'x': b.x, 'y': b.y, 'radius': b.radius,
+                        'color': list(b.color), 'weapon_type': b.weapon_type,
+                    })
         for e in self.enemies:
             frame['enemies'].append({
                 'x': e.x, 'y': e.y, 'type': e.type, 'alive': e.alive,
+                'health': e.health, 'max_health': e.max_health,
             })
+        for b in self.enemy_bullets:
+            if b.alive:
+                frame['enemy_bullets'].append({
+                    'x': b.x, 'y': b.y, 'radius': b.radius,
+                    'color': list(b.color), 'weapon_type': b.weapon_type,
+                })
         if self.boss and self.boss.alive:
-            frame['boss'] = {'x': self.boss.x, 'y': self.boss.y, 'health': self.boss.health}
+            frame['boss'] = {
+                'x': self.boss.x, 'y': self.boss.y,
+                'health': self.boss.health, 'max_health': self.boss.max_health,
+                'phase': self.boss.phase, 'name': self.boss.name,
+                'weakpoint_active': self.boss.weakpoint_active,
+            }
         self.replays.record_frame(frame)
 
     def check_collisions(self):
@@ -349,6 +486,7 @@ class Game:
                         self.audio.play_explosion(explosion_size)
                         self.spawn_powerup(enemy.x, enemy.y)
                         self.difficulty.on_enemy_killed()
+                        self.bestiary.record_kill(enemy.type)
                     break
             if not bullet.alive:
                 continue
@@ -382,6 +520,7 @@ class Game:
                                 'boss', COLORS['boss']
                             )
                         self.audio.play_explosion('boss')
+                        self.bestiary.record_boss_kill(self.boss.name)
                         self.difficulty.wave_complete = True
                         self.boss = None
         for player in self.players:
@@ -560,7 +699,16 @@ class Game:
                 else:
                     self.state = GameState.GAME_OVER
             elif self.difficulty.wave_complete:
-                self.start_new_wave()
+                self._start_upgrade_select()
+        elif self.state == GameState.UPGRADE_SELECT:
+            self.handle_upgrade_select_input()
+            self.starfield.update(dt)
+        elif self.state == GameState.HANGAR:
+            self.handle_hangar_input()
+            self.starfield.update(dt)
+        elif self.state == GameState.BESTIARY:
+            self.handle_bestiary_input()
+            self.starfield.update(dt)
         elif self.state == GameState.GAME_OVER:
             if self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_ESCAPE):
                 self.state = GameState.MENU
@@ -576,13 +724,29 @@ class Game:
             self.replay_overlay_timer = 2000
             self.state = GameState.REPLAYS
             return
+        self._update_replay_from_frame(frame)
+        self.starfield.update(dt * 0.5)
+        self.particles.update(dt * 0.5)
+        self.replay_overlay_timer += dt
+
+    def _update_replay_from_frame(self, frame):
         if 'players' in frame:
             for i, pf in enumerate(frame['players']):
                 if i < len(self.players):
-                    self.players[i].x = pf.get('x', self.players[i].x)
-                    self.players[i].y = pf.get('y', self.players[i].y)
-                    self.players[i].alive = pf.get('alive', True)
-                    self.players[i].health = pf.get('health', 100)
+                    p = self.players[i]
+                    p.x = pf.get('x', p.x)
+                    p.y = pf.get('y', p.y)
+                    p.alive = pf.get('alive', True)
+                    p.health = pf.get('health', 100)
+                    if 'color' in pf:
+                        p.color = tuple(pf['color'])
+                    if 'shape_type' in pf:
+                        p.shape_type = pf['shape_type']
+                    if 'weapon' in pf and hasattr(p, 'weapon_order'):
+                        try:
+                            p.current_weapon_idx = p.weapon_order.index(pf['weapon'])
+                        except (ValueError, AttributeError):
+                            pass
         if 'enemies' in frame:
             self.enemies = []
             for ef in frame['enemies']:
@@ -590,24 +754,63 @@ class Game:
                     try:
                         e = Enemy(ef.get('type', 'drone'), ef.get('x', 0), ef.get('y', 0))
                         e.spawn_animation = 0
+                        e.health = ef.get('health', e.max_health)
+                        e.max_health = ef.get('max_health', e.max_health)
                         self.enemies.append(e)
                     except Exception:
                         pass
+        if 'player_bullets' in frame:
+            for i, p in enumerate(self.players):
+                p.bullets = []
+            for idx, bf in enumerate(frame['player_bullets']):
+                pidx = idx % max(1, len(self.players))
+                if pidx < len(self.players):
+                    try:
+                        b = Bullet(
+                            bf.get('x', 0), bf.get('y', 0),
+                            0, 0, 0,
+                            bf.get('weapon_type', 'laser'),
+                            tuple(bf.get('color', (255, 255, 255))),
+                            True, bf.get('radius', 3)
+                        )
+                        self.players[pidx].bullets.append(b)
+                    except Exception:
+                        pass
+        if 'enemy_bullets' in frame:
+            self.enemy_bullets = []
+            for bf in frame['enemy_bullets']:
+                try:
+                    b = Bullet(
+                        bf.get('x', 0), bf.get('y', 0),
+                        0, 0, 0,
+                        bf.get('weapon_type', 'laser'),
+                        tuple(bf.get('color', (255, 100, 100))),
+                        False, bf.get('radius', 3)
+                    )
+                    self.enemy_bullets.append(b)
+                except Exception:
+                    pass
         if 'boss' in frame and frame['boss']:
             if not self.boss or not self.boss.alive:
-                self.boss = Boss(5)
-                self.boss.entrance = False
-            self.boss.x = frame['boss'].get('x', self.boss.x)
-            self.boss.y = frame['boss'].get('y', self.boss.y)
-            self.boss.health = frame['boss'].get('health', self.boss.health)
+                try:
+                    self.boss = Boss(5)
+                    self.boss.entrance = False
+                except Exception:
+                    pass
+            if self.boss:
+                self.boss.x = frame['boss'].get('x', self.boss.x)
+                self.boss.y = frame['boss'].get('y', self.boss.y)
+                self.boss.health = frame['boss'].get('health', self.boss.health)
+                self.boss.max_health = frame['boss'].get('max_health', self.boss.max_health)
+                self.boss.phase = frame['boss'].get('phase', 0)
+                self.boss.name = frame['boss'].get('name', self.boss.name)
+                self.boss.weakpoint_active = frame['boss'].get('weakpoint_active', False)
         else:
             self.boss = None
         if 'score' in frame:
             self.last_score = frame['score']
         if 'wave' in frame:
             self.last_wave = frame['wave']
-        self.starfield.update(dt * 0.5)
-        self.replay_overlay_timer += dt
 
     def draw(self):
         self.screen.fill(COLORS['bg'])
@@ -679,6 +882,12 @@ class Game:
             options = replay_list + ['返回']
             self.ui.draw_menu(self.screen, '回放', options, self.replay_idx,
                               center_y=SCREEN_HEIGHT // 2 - 50)
+        elif self.state == GameState.UPGRADE_SELECT:
+            self._draw_upgrade_select()
+        elif self.state == GameState.HANGAR:
+            self._draw_hangar()
+        elif self.state == GameState.BESTIARY:
+            self._draw_bestiary()
         elif self.state == GameState.CUSTOMIZE:
             cx = SCREEN_WIDTH // 2
             cy = 100
@@ -759,6 +968,185 @@ class Game:
                               SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 120,
                               COLORS['ui'], self.ui.font_small, center=True)
         pygame.display.flip()
+
+    def _draw_upgrade_select(self):
+        cx = SCREEN_WIDTH // 2
+        self.ui.draw_text_with_shadow(self.screen, '波次完成！选择强化', cx, 80,
+                                       (255, 220, 100), self.ui.font_large, center=True)
+        self.ui.draw_text(self.screen, f'即将进入第 {self.difficulty.wave + 1} 波',
+                          cx, 130, (150, 200, 255), self.ui.font_small, center=True)
+        n = len(self.upgrade_options_current)
+        card_w = 220
+        card_h = 280
+        spacing = 40
+        total_w = n * card_w + (n - 1) * spacing
+        start_x = cx - total_w / 2 + card_w / 2
+        for i, opt in enumerate(self.upgrade_options_current):
+            x = start_x + i * (card_w + spacing)
+            y = 200
+            selected = (i == self.upgrade_select_idx)
+            border_c = (255, 220, 100) if selected else (100, 100, 150)
+            bg_c = (30, 30, 60) if selected else (20, 20, 40)
+            pygame.draw.rect(self.screen, bg_c, (x - card_w / 2, y, card_w, card_h), border_radius=8)
+            border_w = 3 if selected else 1
+            pygame.draw.rect(self.screen, border_c, (x - card_w / 2, y, card_w, card_h), border_w, border_radius=8)
+            icon_y = y + 50
+            pygame.draw.circle(self.screen, (80, 255, 200), (int(x), int(icon_y)), 30)
+            self.ui.draw_text(self.screen, opt['icon'], x, icon_y - 12,
+                              (0, 0, 0), self.ui.font_large, center=True)
+            name_y = y + 110
+            self.ui.draw_text(self.screen, opt['name'], x, name_y,
+                              (255, 255, 255), self.ui.font_medium, center=True)
+            desc_y = y + 160
+            desc_lines = self._wrap_text(opt['desc'], 180)
+            for li, line in enumerate(desc_lines):
+                self.ui.draw_text(self.screen, line, x, desc_y + li * 28,
+                                  (200, 200, 220), self.ui.font_small, center=True)
+            if selected:
+                self.ui.draw_text(self.screen, '[ 空格 / 回车 确认 ]', x, y + card_h - 35,
+                                  (255, 220, 100), self.ui.font_small, center=True)
+
+    def _wrap_text(self, text, max_width):
+        lines = []
+        cur = ''
+        for ch in text:
+            cur += ch
+            if len(cur) * 14 > max_width and ch in '，。、':
+                lines.append(cur)
+                cur = ''
+        if cur:
+            lines.append(cur)
+        return lines
+
+    def _draw_hangar(self):
+        cx = SCREEN_WIDTH // 2
+        self.ui.draw_text_with_shadow(self.screen, '机库', cx, 60,
+                                       (0, 220, 255), self.ui.font_large, center=True)
+        preview_x = cx - 200
+        preview_y = 250
+        preview_color = self.ship_colors[self.ship_color_idx][0]
+        preview_surf = pygame.Surface((160, 180), pygame.SRCALPHA)
+        tmp_player = Player(1)
+        tmp_player.color = preview_color
+        tmp_player.shape_type = self.ship_shape_idx
+        tmp_player.width = 90
+        tmp_player.height = 100
+        tmp_player._draw_ship_shape(preview_surf, 80, 90, preview_color)
+        self.screen.blit(preview_surf, (preview_x - 80, preview_y - 90))
+        pygame.draw.polygon(self.screen, (255, 180, 50), [
+            (preview_x - 14, preview_y + 55),
+            (preview_x, preview_y + 85 + int(math.sin(pygame.time.get_ticks() / 100) * 6)),
+            (preview_x + 14, preview_y + 55),
+        ])
+        stats = SHIP_SHAPE_STATS[self.ship_shape_idx]
+        stat_y = preview_y + 120
+        self.ui.draw_text(self.screen, f'生命: {int(100 * stats["health_mult"])}', preview_x, stat_y,
+                          (180, 255, 180), self.ui.font_small, center=True)
+        self.ui.draw_text(self.screen, f'速度: {int(380 * stats["speed_mult"])}', preview_x, stat_y + 24,
+                          (255, 220, 150), self.ui.font_small, center=True)
+        self.ui.draw_text(self.screen, f'伤害: {int(100 * stats["damage_mult"])}%', preview_x, stat_y + 48,
+                          (255, 150, 150), self.ui.font_small, center=True)
+        panel_x = cx + 120
+        panel_y = 130
+        for i, opt in enumerate(self.hangar_options):
+            item_y = panel_y + i * 50
+            color = (255, 255, 255) if i == self.hangar_idx else (150, 150, 180)
+            if i == 0:
+                val = self.ship_colors[self.ship_color_idx][1]
+            elif i == 1:
+                val = self.ship_shapes[self.ship_shape_idx]
+            elif i == 2:
+                wp_names = {'laser': '激光炮', 'shotgun': '霰弹枪',
+                            'missile': '追踪导弹', 'plasma': '等离子炮'}
+                val = wp_names.get(self.start_weapons[self.start_weapon_idx], '未知')
+            elif i == 3:
+                val = self.start_upgrade_options[self.start_upgrade_idx]
+            else:
+                val = ''
+            arrow_l = '< ' if i == self.hangar_idx else '  '
+            arrow_r = ' >' if i == self.hangar_idx else '  '
+            display = f'{arrow_l}{opt}' + (f': {val}' if i < 4 else '') + arrow_r
+            self.ui.draw_text(self.screen, display, panel_x, item_y, color,
+                              self.ui.font_medium, center=True)
+        self.ui.draw_text(self.screen, '按 ←/→ 更改  ↓/↑ 切换  ESC 返回',
+                          cx, SCREEN_HEIGHT - 50, (100, 150, 200), self.ui.font_small, center=True)
+        route_desc = [
+            '均衡强化：初始武器 +1级',
+            '火力优先：武器+伤害',
+            '速度优先：速度+散热',
+            '防御优先：护盾+伤害',
+        ]
+        self.ui.draw_text(self.screen, '升级路线效果：', panel_x, panel_y + 230,
+                          (200, 200, 255), self.ui.font_small, center=True)
+        self.ui.draw_text(self.screen, route_desc[self.start_upgrade_idx], panel_x, panel_y + 255,
+                          (255, 220, 150), self.ui.font_small, center=True)
+
+    def _draw_bestiary(self):
+        cx = SCREEN_WIDTH // 2
+        self.ui.draw_text_with_shadow(self.screen, '敌人图鉴', cx, 60,
+                                       (255, 100, 100), self.ui.font_large, center=True)
+        for i, tab in enumerate(self.bestiary_tabs):
+            tx = cx - 80 + i * 160
+            ty = 110
+            selected = (i == self.bestiary_tab)
+            color = (255, 255, 255) if selected else (120, 120, 150)
+            bg = (60, 40, 80) if selected else (30, 30, 50)
+            pygame.draw.rect(self.screen, bg, (tx - 60, ty - 20, 120, 40), border_radius=6)
+            self.ui.draw_text(self.screen, tab, tx, ty - 8, color, self.ui.font_medium, center=True)
+        self.ui.draw_text(self.screen, '按 Tab 切换', cx, 160,
+                          (150, 150, 180), self.ui.font_small, center=True)
+        if self.bestiary_tab == 0:
+            items = ENEMY_TYPES
+            info_map = ENEMY_INFO
+            data_map = self.bestiary.get_enemy_data()
+        else:
+            items = BOSS_NAMES
+            info_map = BOSS_INFO
+            data_map = self.bestiary.get_boss_data()
+        list_x = 100
+        list_y = 200
+        item_h = 40
+        for i, key in enumerate(items):
+            iy = list_y + i * item_h
+            encountered = self.bestiary.is_encountered(key, is_boss=(self.bestiary_tab == 1))
+            selected = (i == self.bestiary_idx)
+            bg_c = (50, 50, 80) if selected else (30, 30, 50)
+            name_color = (255, 255, 255) if encountered else (100, 100, 120)
+            pygame.draw.rect(self.screen, bg_c, (list_x, iy, 280, item_h - 6), border_radius=4)
+            if selected:
+                pygame.draw.rect(self.screen, (255, 200, 100), (list_x, iy, 280, item_h - 6), 2, border_radius=4)
+            display_name = info_map.get(key, {}).get('name', key) if encountered else '???'
+            self.ui.draw_text(self.screen, display_name, list_x + 15, iy + 8,
+                              name_color, self.ui.font_small)
+            if encountered and key in data_map:
+                kills = data_map[key].get('kills', 0)
+                self.ui.draw_text(self.screen, f'击败: {kills}', list_x + 200, iy + 8,
+                                  (150, 255, 150), self.ui.font_small)
+        detail_x = 450
+        detail_y = 200
+        cur_key = items[self.bestiary_idx] if items else ''
+        encountered = self.bestiary.is_encountered(cur_key, is_boss=(self.bestiary_tab == 1))
+        if encountered:
+            info = info_map.get(cur_key, {})
+            name = info.get('name', cur_key)
+            desc = info.get('desc', '')
+            self.ui.draw_text(self.screen, name, detail_x, detail_y,
+                              (255, 220, 100), self.ui.font_medium)
+            desc_lines = self._wrap_text(desc, 400)
+            for li, line in enumerate(desc_lines):
+                self.ui.draw_text(self.screen, line, detail_x, detail_y + 50 + li * 30,
+                                  (200, 200, 220), self.ui.font_small)
+            if cur_key in data_map:
+                kills = data_map[cur_key].get('kills', 0)
+                self.ui.draw_text(self.screen, f'总击败数: {kills}', detail_x, detail_y + 180,
+                                  (150, 255, 150), self.ui.font_medium)
+        else:
+            self.ui.draw_text(self.screen, '未发现', detail_x, detail_y,
+                              (100, 100, 120), self.ui.font_medium)
+            self.ui.draw_text(self.screen, '在战斗中遇到后解锁', detail_x, detail_y + 40,
+                              (100, 100, 120), self.ui.font_small)
+        self.ui.draw_text(self.screen, '按 ESC 返回', cx, SCREEN_HEIGHT - 40,
+                          (150, 150, 180), self.ui.font_small, center=True)
 
     def run(self):
         while self.running:
