@@ -65,29 +65,47 @@ class Bullet:
     def draw(self, surface, particle_system=None):
         if not self.alive:
             return
-        if particle_system and self.weapon_type in ('missile', 'plasma'):
-            self.trail_timer += 16
-            if self.trail_timer > 20:
-                self.trail_timer = 0
-                trail_color = self.color
-                particle_system.trail(self.x, self.y, trail_color)
-        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), int(self.radius))
-        if self.weapon_type == 'laser':
-            glow_surf = pygame.Surface((self.radius * 4 + 4, self.radius * 4 + 4), pygame.SRCALPHA)
-            g = (self.color[0], self.color[1], self.color[2], 80)
-            pygame.draw.circle(glow_surf, g,
-                               (self.radius * 2 + 2, self.radius * 2 + 2),
-                               int(self.radius * 2))
-            surface.blit(glow_surf, (self.x - self.radius * 2 - 2, self.y - self.radius * 2 - 2))
-        elif self.weapon_type == 'plasma':
-            glow_surf = pygame.Surface((self.radius * 6 + 6, self.radius * 6 + 6), pygame.SRCALPHA)
-            for i in range(3):
-                alpha = 100 - i * 30
-                g = (self.color[0], self.color[1], self.color[2], alpha)
-                pygame.draw.circle(glow_surf, g,
-                                   (self.radius * 3 + 3, self.radius * 3 + 3),
-                                   int(self.radius * (3 - i)))
-            surface.blit(glow_surf, (self.x - self.radius * 3 - 3, self.y - self.radius * 3 - 3))
+        try:
+            r = max(1, int(self.radius))
+            if particle_system and self.weapon_type in ('missile', 'plasma'):
+                self.trail_timer += 16
+                if self.trail_timer > 20:
+                    self.trail_timer = 0
+                    try:
+                        particle_system.trail(self.x, self.y, self.color)
+                    except Exception:
+                        pass
+            pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), r)
+            if self.weapon_type == 'laser':
+                glow_w = max(4, r * 4 + 4)
+                glow_surf = pygame.Surface((glow_w, glow_w), pygame.SRCALPHA)
+                g = (self.color[0], self.color[1], self.color[2], 80)
+                try:
+                    pygame.draw.circle(glow_surf, g,
+                                       (glow_w // 2, glow_w // 2),
+                                       max(1, int(r * 2)))
+                    surface.blit(glow_surf, (self.x - glow_w // 2, self.y - glow_w // 2))
+                except Exception:
+                    pass
+            elif self.weapon_type == 'plasma':
+                glow_w = max(6, r * 6 + 6)
+                glow_surf = pygame.Surface((glow_w, glow_w), pygame.SRCALPHA)
+                try:
+                    for i in range(3):
+                        alpha = 100 - i * 30
+                        g = (self.color[0], self.color[1], self.color[2], max(0, alpha))
+                        circle_r = max(1, int(r * (3 - i)))
+                        pygame.draw.circle(glow_surf, g,
+                                           (glow_w // 2, glow_w // 2), circle_r)
+                    surface.blit(glow_surf, (self.x - glow_w // 2, self.y - glow_w // 2))
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                pygame.draw.circle(surface, self.color,
+                                   (int(self.x), int(self.y)), max(1, int(self.radius)))
+            except Exception:
+                pass
 
 
 class Weapon:

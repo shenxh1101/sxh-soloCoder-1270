@@ -37,11 +37,6 @@ class Player:
         self.heat_mult = 1.0
         self.upgrades = []
         self.extra_pellets = 0
-        stats = SHIP_SHAPE_STATS[self.shape_type]
-        self.max_health = int(100 * stats['health_mult'])
-        self.health = self.max_health
-        self.speed_mult = stats['speed_mult']
-        self.damage_mult = stats['damage_mult']
         self.bullets = []
         self.is_firing = False
         self.thrust_angle = 270
@@ -216,14 +211,44 @@ class Player:
     def fire(self, current_time):
         if not self.alive:
             return []
-        if self.is_firing:
+        if not self.is_firing:
+            return []
+        try:
             bullets = self.current_weapon.fire(
                 self.x, self.y - self.height / 2, -math.pi / 2, current_time
             )
             for b in bullets:
                 b.damage *= self.damage_mult
+            if getattr(self, 'extra_pellets', 0) > 0:
+                base_bullets = list(bullets)
+                for n in range(self.extra_pellets):
+                    angle_offset = ((n + 1) // 2) * (math.pi / 12) * (1 if n % 2 == 0 else -1)
+                    for base in base_bullets:
+                        try:
+                            new_b = Bullet(
+                                base.x,
+                                base.y,
+                                base.vx,
+                                base.vy,
+                                base.damage,
+                                base.weapon_type,
+                                base.color,
+                                True,
+                                base.radius
+                            )
+                            c, s = math.cos(angle_offset), math.sin(angle_offset)
+                            speed = math.hypot(base.vx, base.vy)
+                            if speed > 0:
+                                orig_angle = math.atan2(base.vy, base.vx)
+                                new_angle = orig_angle + angle_offset
+                                new_b.vx = speed * math.cos(new_angle)
+                                new_b.vy = speed * math.sin(new_angle)
+                            bullets.append(new_b)
+                        except Exception:
+                            pass
             return bullets
-        return []
+        except Exception:
+            return []
 
     def draw(self, surface):
         try:
@@ -304,6 +329,14 @@ class Player:
             (cx + 6, cy + h / 8),
             (cx - 6, cy + h / 8),
         ])
+
+    def apply_shape_stats(self):
+        stats = SHIP_SHAPE_STATS[self.shape_type]
+        prev_ratio = self.health / max(1, self.max_health) if self.max_health > 0 else 1
+        self.max_health = int(100 * stats['health_mult'])
+        self.health = int(self.max_health * max(0.1, prev_ratio))
+        self.speed_mult = stats['speed_mult']
+        self.damage_mult = stats['damage_mult']
 
     def upgrade_current_weapon(self):
         return self.current_weapon.upgrade()

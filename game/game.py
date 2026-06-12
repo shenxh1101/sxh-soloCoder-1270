@@ -93,6 +93,7 @@ class Game:
         self.last_score = 0
         self.last_wave = 1
         self.replay_overlay_timer = 0
+        self._replay_pending_events = []
         self._prev_state = GameState.MENU
         self._init_powerup_drop_chance()
 
@@ -104,6 +105,7 @@ class Game:
         p1 = Player(1)
         p1.color = self.ship_colors[self.ship_color_idx][0]
         p1.shape_type = self.ship_shape_idx
+        p1.apply_shape_stats()
         start_wep = self.start_weapons[self.start_weapon_idx]
         p1.current_weapon_idx = p1.weapon_order.index(start_wep)
         self._apply_start_upgrades(p1)
@@ -114,6 +116,7 @@ class Game:
                         255 - self.ship_colors[self.ship_color_idx][0][1],
                         255 - self.ship_colors[self.ship_color_idx][0][2])
             p2.shape_type = self.ship_shape_idx
+            p2.apply_shape_stats()
             p2.current_weapon_idx = p2.weapon_order.index(start_wep)
             self._apply_start_upgrades(p2)
             self.players.append(p2)
@@ -360,16 +363,22 @@ class Game:
             self.state = GameState.PAUSED
         if self.input.is_key_pressed(pygame.K_1):
             self.players[0].select_weapon(0)
+            self._record_weapon_switch(0)
         if self.input.is_key_pressed(pygame.K_2):
             self.players[0].select_weapon(1)
+            self._record_weapon_switch(0)
         if self.input.is_key_pressed(pygame.K_3):
             self.players[0].select_weapon(2)
+            self._record_weapon_switch(0)
         if self.input.is_key_pressed(pygame.K_4):
             self.players[0].select_weapon(3)
+            self._record_weapon_switch(0)
         if self.input.is_key_pressed(pygame.K_q):
             self.players[0].switch_weapon(-1)
+            self._record_weapon_switch(0)
         if self.input.is_key_pressed(pygame.K_e):
             self.players[0].switch_weapon(1)
+            self._record_weapon_switch(0)
         p1_keys = self.input.get_player_keys(1)
         current_time = pygame.time.get_ticks()
         for i, player in enumerate(self.players):
@@ -412,8 +421,9 @@ class Game:
             'boss': None,
             'score': sum(p.score for p in self.players),
             'wave': self.difficulty.wave,
-            'explosions': [],
+            'events': self._replay_pending_events[:],
         }
+        self._replay_pending_events.clear()
         for p in self.players:
             frame['players'].append({
                 'x': p.x, 'y': p.y, 'alive': p.alive,
@@ -448,6 +458,14 @@ class Game:
             }
         self.replays.record_frame(frame)
 
+    def _record_weapon_switch(self, player_idx):
+        if player_idx < len(self.players):
+            p = self.players[player_idx]
+            self._replay_pending_events.append({
+                'type': 'weapon_switch', 'player_id': p.id,
+                'weapon': p.weapon_order[p.current_weapon_idx]
+            })
+
     def check_collisions(self):
         all_player_bullets = []
         for p in self.players:
@@ -469,6 +487,10 @@ class Game:
                     self.difficulty.on_damage_dealt(bullet.damage)
                     self.particles.hit_spark(bullet.x, bullet.y, bullet.color)
                     self.audio.play_hit()
+                    self._replay_pending_events.append({
+                        'type': 'hit_spark', 'x': bullet.x, 'y': bullet.y,
+                        'color': list(bullet.color)
+                    })
                     if bullet.pierce > 0:
                         bullet.pierce -= 1
                     else:
@@ -484,6 +506,10 @@ class Game:
                             explosion_size = 'small'
                         self.particles.explosion(enemy.x, enemy.y, explosion_size, enemy.color)
                         self.audio.play_explosion(explosion_size)
+                        self._replay_pending_events.append({
+                            'type': 'explosion', 'x': enemy.x, 'y': enemy.y,
+                            'size': explosion_size, 'color': list(enemy.color)
+                        })
                         self.spawn_powerup(enemy.x, enemy.y)
                         self.difficulty.on_enemy_killed()
                         self.bestiary.record_kill(enemy.type)
@@ -497,6 +523,10 @@ class Game:
                     spark_color = (255, 255, 0) if was_weak else bullet.color
                     self.particles.hit_spark(bullet.x, bullet.y, spark_color)
                     self.audio.play_hit()
+                    self._replay_pending_events.append({
+                        'type': 'hit_spark', 'x': bullet.x, 'y': bullet.y,
+                        'color': list(spark_color)
+                    })
                     if was_weak:
                         for player in self.players:
                             if player.alive:
@@ -509,16 +539,22 @@ class Game:
                         self.particles.explosion(self.boss.x, self.boss.y, 'large', COLORS['boss'])
                         self.audio.play_explosion('large')
                         self.audio.play_warning()
+                        self._replay_pending_events.append({
+                            'type': 'explosion', 'x': self.boss.x, 'y': self.boss.y,
+                            'size': 'large', 'color': list(COLORS['boss'])
+                        })
                     if not self.boss.alive:
                         for player in self.players:
                             if player.alive:
                                 player.add_score(2000)
-                        for _ in range(5):
-                            self.particles.explosion(
-                                self.boss.x + random.randint(-50, 50),
-                                self.boss.y + random.randint(-30, 30),
-                                'boss', COLORS['boss']
-                            )
+                        for i in range(5):
+                            ex = self.boss.x + random.randint(-50, 50)
+                            ey = self.boss.y + random.randint(-30, 30)
+                            self.particles.explosion(ex, ey, 'boss', COLORS['boss'])
+                            self._replay_pending_events.append({
+                                'type': 'explosion', 'x': ex, 'y': ey,
+                                'size': 'boss', 'color': list(COLORS['boss'])
+                            })
                         self.audio.play_explosion('boss')
                         self.bestiary.record_boss_kill(self.boss.name)
                         self.difficulty.wave_complete = True
@@ -811,6 +847,19 @@ class Game:
             self.last_score = frame['score']
         if 'wave' in frame:
             self.last_wave = frame['wave']
+        if 'events' in frame:
+            for ev in frame['events']:
+                try:
+                    et = ev.get('type', '')
+                    if et == 'explosion':
+                        color = tuple(ev.get('color', (255, 100, 100)))
+                        self.particles.explosion(ev['x'], ev['y'], ev.get('size', 'medium'), color)
+                        self.audio.play_explosion(ev.get('size', 'medium'))
+                    elif et == 'hit_spark':
+                        color = tuple(ev.get('color', (255, 255, 100)))
+                        self.particles.hit_spark(ev['x'], ev['y'], color)
+                except Exception:
+                    pass
 
     def draw(self):
         self.screen.fill(COLORS['bg'])

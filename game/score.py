@@ -151,25 +151,41 @@ class BestiaryManager:
             pass
 
     def record_encounter(self, enemy_type):
+        changed = False
         if enemy_type not in self.data['enemies']:
             self.data['enemies'][enemy_type] = {'kills': 0, 'encountered': True}
-        else:
+            changed = True
+        elif not self.data['enemies'][enemy_type].get('encountered', False):
             self.data['enemies'][enemy_type]['encountered'] = True
+            changed = True
+        if changed:
+            self._save()
 
     def record_kill(self, enemy_type):
         self.record_encounter(enemy_type)
-        self.data['enemies'][enemy_type]['kills'] = self.data['enemies'].get(enemy_type, {}).get('kills', 0) + 1
+        if enemy_type in self.data['enemies']:
+            self.data['enemies'][enemy_type]['kills'] = self.data['enemies'][enemy_type].get('kills', 0) + 1
+        else:
+            self.data['enemies'][enemy_type] = {'kills': 1, 'encountered': True}
         self._save()
 
     def record_boss(self, boss_name):
+        changed = False
         if boss_name not in self.data['bosses']:
             self.data['bosses'][boss_name] = {'kills': 0, 'encountered': True}
-        else:
+            changed = True
+        elif not self.data['bosses'][boss_name].get('encountered', False):
             self.data['bosses'][boss_name]['encountered'] = True
+            changed = True
+        if changed:
+            self._save()
 
     def record_boss_kill(self, boss_name):
         self.record_boss(boss_name)
-        self.data['bosses'][boss_name]['kills'] = self.data['bosses'].get(boss_name, {}).get('kills', 0) + 1
+        if boss_name in self.data['bosses']:
+            self.data['bosses'][boss_name]['kills'] = self.data['bosses'][boss_name].get('kills', 0) + 1
+        else:
+            self.data['bosses'][boss_name] = {'kills': 1, 'encountered': True}
         self._save()
 
     def get_enemy_data(self):
