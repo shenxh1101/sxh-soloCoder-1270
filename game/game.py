@@ -21,9 +21,11 @@ class GameState:
     GAME_OVER = 'game_over'
     HIGHSCORES = 'highscores'
     REPLAYS = 'replays'
+    REPLAY_PLAYING = 'replay_playing'
     ENTER_NAME = 'enter_name'
     WAVE_NOTIFY = 'wave_notify'
     BOSS_INTRO = 'boss_intro'
+    CUSTOMIZE = 'customize'
 
 
 class Game:
@@ -34,12 +36,27 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
         self.state = GameState.MENU
-        self.menu_options = ['开始游戏', '双人合作', '高分榜', '回放', '退出']
+        self.menu_options = ['开始游戏', '双人合作', '飞船自定义', '高分榜', '回放', '退出']
         self.menu_idx = 0
         self.highscore_options = ['返回']
         self.highscore_idx = 0
         self.replay_options = ['返回']
         self.replay_idx = 0
+        self.customize_idx = 0
+        self.customize_options = ['颜色', '外形', '初始武器', '确认']
+        self.ship_colors = [
+            ((0, 220, 255), '科技蓝'),
+            ((255, 165, 0), '烈焰橙'),
+            ((80, 255, 120), '翠绿'),
+            ((255, 100, 200), '粉晶'),
+            ((255, 255, 100), '金黄'),
+            ((200, 150, 255), '紫晶'),
+        ]
+        self.ship_color_idx = 0
+        self.ship_shapes = ['经典战机', '重型战机', '轻型战机', '三角战机']
+        self.ship_shape_idx = 0
+        self.start_weapon_idx = 0
+        self.start_weapons = ['laser', 'shotgun', 'missile', 'plasma']
         self.starfield = StarField()
         self.particles = ParticleSystem()
         self.audio = SoundManager()
@@ -60,6 +77,7 @@ class Game:
         self.player_name_input = ''
         self.last_score = 0
         self.last_wave = 1
+        self.replay_overlay_timer = 0
         self._init_powerup_drop_chance()
 
     def _init_powerup_drop_chance(self):
@@ -67,9 +85,20 @@ class Game:
 
     def reset_game(self, two_player=False):
         self.two_player_mode = two_player
-        self.players = [Player(1)]
+        p1 = Player(1)
+        p1.color = self.ship_colors[self.ship_color_idx][0]
+        p1.shape_type = self.ship_shape_idx
+        start_wep = self.start_weapons[self.start_weapon_idx]
+        p1.current_weapon_idx = p1.weapon_order.index(start_wep)
+        self.players = [p1]
         if two_player:
-            self.players.append(Player(2))
+            p2 = Player(2)
+            p2.color = (255 - self.ship_colors[self.ship_color_idx][0][0],
+                        255 - self.ship_colors[self.ship_color_idx][0][1],
+                        255 - self.ship_colors[self.ship_color_idx][0][2])
+            p2.shape_type = self.ship_shape_idx
+            p2.current_weapon_idx = p2.weapon_order.index(start_wep)
+            self.players.append(p2)
         self.enemies = []
         self.enemy_bullets = []
         self.powerups = []
@@ -77,18 +106,32 @@ class Game:
         self.difficulty = DifficultyManager()
         self.difficulty.enemies_in_wave = 5
         self.spawn_timer = 0
-        self.wave_notify_timer = 2000
-        self.state = GameState.WAVE_NOTIFY
-        self.replays.start_recording()
-
-    def start_new_wave(self):
-        self.difficulty.start_new_wave()
-        if self.difficulty.should_spawn_boss():
+        self.replay_overlay_timer = 0
+        if self.difficulty.wave % WAVE_BOSS_INTERVAL == 0:
             self.boss = Boss(self.difficulty.wave)
             self.state = GameState.BOSS_INTRO
             self.boss_intro_timer = 3000
             self.audio.play_boss_intro()
         else:
+            self.wave_notify_timer = 2000
+            self.state = GameState.WAVE_NOTIFY
+        if not self.replays.replaying:
+            self.replays.start_recording()
+
+    def start_new_wave(self):
+        self.difficulty.start_new_wave()
+        self.enemies = []
+        self.enemy_bullets = []
+        self.powerups = []
+        self.spawn_timer = 0
+        if self.difficulty.wave % WAVE_BOSS_INTERVAL == 0:
+            self.boss = Boss(self.difficulty.wave)
+            self.state = GameState.BOSS_INTRO
+            self.boss_intro_timer = 3000
+            self.audio.play_boss_intro()
+        else:
+            self.boss = None
+            self.difficulty.enemies_in_wave = 5 + self.difficulty.wave * 3
             self.wave_notify_timer = 2000
             self.state = GameState.WAVE_NOTIFY
 
@@ -131,12 +174,41 @@ class Game:
             elif self.menu_idx == 1:
                 self.reset_game(two_player=True)
             elif self.menu_idx == 2:
-                self.state = GameState.HIGHSCORES
+                self.state = GameState.CUSTOMIZE
+                self.customize_idx = 0
             elif self.menu_idx == 3:
+                self.state = GameState.HIGHSCORES
+            elif self.menu_idx == 4:
                 self.state = GameState.REPLAYS
                 self._refresh_replay_list()
-            elif self.menu_idx == 4:
+            elif self.menu_idx == 5:
                 self.running = False
+
+    def handle_customize_input(self):
+        if self.input.is_key_pressed(pygame.K_ESCAPE):
+            self.state = GameState.MENU
+            return
+        if self.input.is_key_pressed(pygame.K_UP) or self.input.is_key_pressed(pygame.K_w):
+            self.customize_idx = (self.customize_idx - 1) % len(self.customize_options)
+        if self.input.is_key_pressed(pygame.K_DOWN) or self.input.is_key_pressed(pygame.K_s):
+            self.customize_idx = (self.customize_idx + 1) % len(self.customize_options)
+        if self.input.is_key_pressed(pygame.K_LEFT) or self.input.is_key_pressed(pygame.K_a):
+            if self.customize_idx == 0:
+                self.ship_color_idx = (self.ship_color_idx - 1) % len(self.ship_colors)
+            elif self.customize_idx == 1:
+                self.ship_shape_idx = (self.ship_shape_idx - 1) % len(self.ship_shapes)
+            elif self.customize_idx == 2:
+                self.start_weapon_idx = (self.start_weapon_idx - 1) % len(self.start_weapons)
+        if self.input.is_key_pressed(pygame.K_RIGHT) or self.input.is_key_pressed(pygame.K_d):
+            if self.customize_idx == 0:
+                self.ship_color_idx = (self.ship_color_idx + 1) % len(self.ship_colors)
+            elif self.customize_idx == 1:
+                self.ship_shape_idx = (self.ship_shape_idx + 1) % len(self.ship_shapes)
+            elif self.customize_idx == 2:
+                self.start_weapon_idx = (self.start_weapon_idx + 1) % len(self.start_weapons)
+        if self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_SPACE):
+            if self.customize_idx == len(self.customize_options) - 1:
+                self.state = GameState.MENU
 
     def handle_highscore_input(self):
         if self.input.is_key_pressed(pygame.K_ESCAPE) or self.input.is_key_pressed(pygame.K_RETURN):
@@ -145,6 +217,7 @@ class Game:
     def handle_replay_input(self):
         if self.input.is_key_pressed(pygame.K_ESCAPE):
             self.state = GameState.MENU
+            return
         replay_list = self.replays.list_replays()
         options = replay_list + ['返回']
         if self.input.is_key_pressed(pygame.K_UP) or self.input.is_key_pressed(pygame.K_w):
@@ -154,21 +227,24 @@ class Game:
         if self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_SPACE):
             if self.replay_idx == len(options) - 1:
                 self.state = GameState.MENU
-            elif replay_list:
+            elif replay_list and self.replay_idx < len(replay_list):
                 name = replay_list[self.replay_idx]
                 if self.replays.load_replay(name):
-                    self.reset_game(two_player=False)
-                    self.state = GameState.PLAYING
+                    self.players = [Player(1)]
+                    self.enemies = []
+                    self.enemy_bullets = []
+                    self.boss = None
+                    self.powerups = []
+                    self.state = GameState.REPLAY_PLAYING
 
     def _refresh_replay_list(self):
         replay_list = self.replays.list_replays()
         self.replay_options = replay_list + ['返回']
         self.replay_idx = 0
 
-    def handle_playing_input(self):
+    def handle_playing_input(self, dt):
         if self.input.is_key_pressed(pygame.K_ESCAPE):
             self.state = GameState.PAUSED
-        p1_keys = self.input.get_player_keys(1)
         if self.input.is_key_pressed(pygame.K_1):
             self.players[0].select_weapon(0)
         if self.input.is_key_pressed(pygame.K_2):
@@ -181,18 +257,19 @@ class Game:
             self.players[0].switch_weapon(-1)
         if self.input.is_key_pressed(pygame.K_e):
             self.players[0].switch_weapon(1)
+        p1_keys = self.input.get_player_keys(1)
+        current_time = pygame.time.get_ticks()
         for i, player in enumerate(self.players):
             if not player.alive:
                 continue
             keys = p1_keys if i == 0 else self.input.get_player_keys(2)
-            current_time = pygame.time.get_ticks()
-            player.update(16, keys, self.enemies, self.enemy_bullets, self.particles, current_time)
+            player.update(dt, keys, self.enemies, self.enemy_bullets, self.particles, current_time)
             new_bullets = player.fire(current_time)
             if new_bullets:
-                for b in new_bullets:
-                    self.players[i].bullets.append(b)
+                player.bullets.extend(new_bullets)
                 self.audio.play_shoot(player.current_weapon.type)
-        self._record_replay_frame()
+        if not self.replays.replaying:
+            self._record_replay_frame()
 
     def handle_paused_input(self):
         if self.input.is_key_pressed(pygame.K_ESCAPE):
@@ -235,78 +312,78 @@ class Game:
         self.replays.record_frame(frame)
 
     def check_collisions(self):
-        current_time = pygame.time.get_ticks()
-        for player in self.players:
-            if not player.alive:
+        all_player_bullets = []
+        for p in self.players:
+            all_player_bullets.extend(p.bullets)
+        for bullet in all_player_bullets:
+            if not bullet.alive or not bullet.is_player:
                 continue
-            for bullet_list in [p.bullets for p in self.players]:
-                for bullet in bullet_list:
-                    if not bullet.alive or not bullet.is_player:
-                        continue
-                    for enemy in self.enemies:
-                        if not enemy.alive:
-                            continue
-                        if id(enemy) in bullet.hit_enemies:
-                            continue
-                        if circle_rect_collide(bullet.x, bullet.y, bullet.radius, enemy.rect):
-                            was_crit = enemy.take_damage(bullet.damage)
-                            bullet.hit_enemies.add(id(enemy))
-                            player.add_score(enemy.score // 5)
-                            self.difficulty.on_damage_dealt(bullet.damage)
-                            self.particles.hit_spark(bullet.x, bullet.y, bullet.color)
-                            self.audio.play_hit()
-                            if bullet.pierce > 0:
-                                bullet.pierce -= 1
-                            else:
-                                bullet.alive = False
-                            if not enemy.alive:
-                                player.add_score(enemy.score)
-                                explosion_size = 'medium'
-                                if enemy.type in ('tank', 'mother_ship', 'shield_cruiser'):
-                                    explosion_size = 'large'
-                                elif enemy.type in ('drone', 'kamikaze'):
-                                    explosion_size = 'small'
-                                self.particles.explosion(enemy.x, enemy.y, explosion_size, enemy.color)
-                                self.audio.play_explosion(explosion_size)
-                                self.spawn_powerup(enemy.x, enemy.y)
-                                self.difficulty.on_enemy_killed()
-                            break
-            for player in self.players:
-                if not player.alive:
+            for enemy in self.enemies:
+                if not enemy.alive:
                     continue
-                for bullet_list in [p.bullets for p in self.players]:
-                    for bullet in bullet_list:
-                        if not bullet.alive or not bullet.is_player:
-                            continue
-                        if self.boss and self.boss.alive and not self.boss.entrance:
-                            if circle_rect_collide(bullet.x, bullet.y, bullet.radius, self.boss.rect):
-                                was_weak = self.boss.take_damage(bullet.damage, bullet.x, bullet.y)
-                                self.difficulty.on_damage_dealt(bullet.damage)
-                                spark_color = (255, 255, 0) if was_weak else bullet.color
-                                self.particles.hit_spark(bullet.x, bullet.y, spark_color)
-                                self.audio.play_hit()
-                                if was_weak:
-                                    player.add_score(100)
-                                if bullet.pierce > 0:
-                                    bullet.pierce -= 1
-                                else:
-                                    bullet.alive = False
-                                if self.boss.update_phase():
-                                    self.particles.explosion(self.boss.x, self.boss.y, 'large', COLORS['boss'])
-                                    self.audio.play_explosion('large')
-                                    self.audio.play_warning()
-                                if not self.boss.alive:
-                                    player.add_score(2000)
-                                    for _ in range(5):
-                                        self.particles.explosion(
-                                            self.boss.x + random.randint(-50, 50),
-                                            self.boss.y + random.randint(-30, 30),
-                                            'boss', COLORS['boss']
-                                        )
-                                    self.audio.play_explosion('boss')
-                                    self.difficulty.wave_complete = True
-                                    self.boss = None
-                                break
+                if id(enemy) in bullet.hit_enemies:
+                    continue
+                if circle_rect_collide(bullet.x, bullet.y, bullet.radius, enemy.rect):
+                    enemy.take_damage(bullet.damage)
+                    bullet.hit_enemies.add(id(enemy))
+                    for player in self.players:
+                        if player.alive:
+                            player.add_score(enemy.score // 5)
+                    self.difficulty.on_damage_dealt(bullet.damage)
+                    self.particles.hit_spark(bullet.x, bullet.y, bullet.color)
+                    self.audio.play_hit()
+                    if bullet.pierce > 0:
+                        bullet.pierce -= 1
+                    else:
+                        bullet.alive = False
+                    if not enemy.alive:
+                        for player in self.players:
+                            if player.alive:
+                                player.add_score(enemy.score)
+                        explosion_size = 'medium'
+                        if enemy.type in ('tank', 'mother_ship', 'shield_cruiser'):
+                            explosion_size = 'large'
+                        elif enemy.type in ('drone', 'kamikaze'):
+                            explosion_size = 'small'
+                        self.particles.explosion(enemy.x, enemy.y, explosion_size, enemy.color)
+                        self.audio.play_explosion(explosion_size)
+                        self.spawn_powerup(enemy.x, enemy.y)
+                        self.difficulty.on_enemy_killed()
+                    break
+            if not bullet.alive:
+                continue
+            if self.boss and self.boss.alive and not self.boss.entrance:
+                if circle_rect_collide(bullet.x, bullet.y, bullet.radius, self.boss.rect):
+                    was_weak = self.boss.take_damage(bullet.damage, bullet.x, bullet.y)
+                    self.difficulty.on_damage_dealt(bullet.damage)
+                    spark_color = (255, 255, 0) if was_weak else bullet.color
+                    self.particles.hit_spark(bullet.x, bullet.y, spark_color)
+                    self.audio.play_hit()
+                    if was_weak:
+                        for player in self.players:
+                            if player.alive:
+                                player.add_score(100)
+                    if bullet.pierce > 0:
+                        bullet.pierce -= 1
+                    else:
+                        bullet.alive = False
+                    if self.boss.update_phase():
+                        self.particles.explosion(self.boss.x, self.boss.y, 'large', COLORS['boss'])
+                        self.audio.play_explosion('large')
+                        self.audio.play_warning()
+                    if not self.boss.alive:
+                        for player in self.players:
+                            if player.alive:
+                                player.add_score(2000)
+                        for _ in range(5):
+                            self.particles.explosion(
+                                self.boss.x + random.randint(-50, 50),
+                                self.boss.y + random.randint(-30, 30),
+                                'boss', COLORS['boss']
+                            )
+                        self.audio.play_explosion('boss')
+                        self.difficulty.wave_complete = True
+                        self.boss = None
         for player in self.players:
             if not player.alive:
                 continue
@@ -329,7 +406,6 @@ class Game:
                     if player.take_damage(enemy.damage):
                         self.difficulty.on_player_damage_taken(enemy.damage)
                     if enemy.type == 'kamikaze':
-                        enemy.health = 0
                         enemy.alive = False
                         self.particles.explosion(enemy.x, enemy.y, 'medium', enemy.color)
                         self.audio.play_explosion('medium')
@@ -391,6 +467,10 @@ class Game:
                 self.input.process_event(event)
         if self.state == GameState.MENU:
             self.handle_menu_input()
+            self.starfield.update(dt)
+        elif self.state == GameState.CUSTOMIZE:
+            self.handle_customize_input()
+            self.starfield.update(dt)
         elif self.state == GameState.HIGHSCORES:
             self.handle_highscore_input()
         elif self.state == GameState.REPLAYS:
@@ -407,18 +487,20 @@ class Game:
                 self.state = GameState.PLAYING
         elif self.state == GameState.PAUSED:
             self.handle_paused_input()
+        elif self.state == GameState.REPLAY_PLAYING:
+            self._handle_replay_playing(dt)
         elif self.state == GameState.PLAYING:
-            self.handle_playing_input()
+            self.handle_playing_input(dt)
             time_scale = self.get_global_time_scale()
             scaled_dt = dt * time_scale
             self.starfield.update(scaled_dt)
             self.particles.update(scaled_dt)
             self.audio.update(dt)
             total_enemies = len([e for e in self.enemies if e.alive])
-            intensity = min(1.0, total_enemies / 15 + (0.5 if self.boss and self.boss.alive else 0))
+            intensity = min(1.0, total_enemies / 12 + (0.6 if self.boss and self.boss.alive else 0))
             self.audio.set_intensity(intensity)
             current_time = pygame.time.get_ticks()
-            if not self.boss or not self.boss.alive:
+            if (not self.boss or not self.boss.alive) and self.difficulty.wave % WAVE_BOSS_INTERVAL != 0:
                 self.spawn_timer += dt
                 if self.spawn_timer >= self.difficulty.current_spawn_rate:
                     self.spawn_timer = 0
@@ -426,23 +508,38 @@ class Game:
                         self.spawn_enemy()
             for enemy in self.enemies:
                 if enemy.alive:
-                    new_bullets = enemy.update(scaled_dt, self.players, self.particles, current_time)
-                    self.enemy_bullets.extend(new_bullets)
+                    try:
+                        new_bullets = enemy.update(scaled_dt, self.players, self.particles, current_time)
+                        self.enemy_bullets.extend(new_bullets)
+                    except Exception:
+                        pass
                 if enemy.y > SCREEN_HEIGHT + 50 and enemy.alive:
                     enemy.alive = False
                     self.difficulty.on_enemy_escaped()
             self.enemies = [e for e in self.enemies if e.alive]
             if self.boss and self.boss.alive:
-                boss_bullets = self.boss.update(scaled_dt, self.players, current_time, self.particles)
-                self.enemy_bullets.extend(boss_bullets)
+                try:
+                    boss_bullets = self.boss.update(scaled_dt, self.players, current_time, self.particles)
+                    self.enemy_bullets.extend(boss_bullets)
+                except Exception:
+                    pass
             for b in self.enemy_bullets:
-                b.update(scaled_dt)
+                try:
+                    b.update(scaled_dt)
+                except Exception:
+                    b.alive = False
             self.enemy_bullets = [b for b in self.enemy_bullets if b.alive]
             for p in self.players:
                 for b in p.bullets:
-                    b.update(scaled_dt, self.enemies, self.players, self.particles)
+                    try:
+                        b.update(scaled_dt, self.enemies, self.players)
+                    except Exception:
+                        b.alive = False
                 p.bullets = [b for b in p.bullets if b.alive]
-            self.check_collisions()
+            try:
+                self.check_collisions()
+            except Exception:
+                pass
             self.update_dodge_slowmo()
             for pu in self.powerups:
                 if pu['alive']:
@@ -468,11 +565,56 @@ class Game:
             if self.input.is_key_pressed(pygame.K_RETURN) or self.input.is_key_pressed(pygame.K_ESCAPE):
                 self.state = GameState.MENU
 
+    def _handle_replay_playing(self, dt):
+        if self.input.is_key_pressed(pygame.K_ESCAPE):
+            self.replays.stop_replay()
+            self.state = GameState.REPLAYS
+            return
+        frame = self.replays.get_next_frame()
+        if frame is None:
+            self.replays.stop_replay()
+            self.replay_overlay_timer = 2000
+            self.state = GameState.REPLAYS
+            return
+        if 'players' in frame:
+            for i, pf in enumerate(frame['players']):
+                if i < len(self.players):
+                    self.players[i].x = pf.get('x', self.players[i].x)
+                    self.players[i].y = pf.get('y', self.players[i].y)
+                    self.players[i].alive = pf.get('alive', True)
+                    self.players[i].health = pf.get('health', 100)
+        if 'enemies' in frame:
+            self.enemies = []
+            for ef in frame['enemies']:
+                if ef.get('alive', True):
+                    try:
+                        e = Enemy(ef.get('type', 'drone'), ef.get('x', 0), ef.get('y', 0))
+                        e.spawn_animation = 0
+                        self.enemies.append(e)
+                    except Exception:
+                        pass
+        if 'boss' in frame and frame['boss']:
+            if not self.boss or not self.boss.alive:
+                self.boss = Boss(5)
+                self.boss.entrance = False
+            self.boss.x = frame['boss'].get('x', self.boss.x)
+            self.boss.y = frame['boss'].get('y', self.boss.y)
+            self.boss.health = frame['boss'].get('health', self.boss.health)
+        else:
+            self.boss = None
+        if 'score' in frame:
+            self.last_score = frame['score']
+        if 'wave' in frame:
+            self.last_wave = frame['wave']
+        self.starfield.update(dt * 0.5)
+        self.replay_overlay_timer += dt
+
     def draw(self):
         self.screen.fill(COLORS['bg'])
         self.starfield.draw(self.screen)
         if self.state in (GameState.PLAYING, GameState.PAUSED, GameState.WAVE_NOTIFY,
-                          GameState.BOSS_INTRO, GameState.GAME_OVER, GameState.ENTER_NAME):
+                          GameState.BOSS_INTRO, GameState.GAME_OVER, GameState.ENTER_NAME,
+                          GameState.REPLAY_PLAYING):
             for p in self.powerups:
                 if p['alive']:
                     offset = math.sin(p['bob']) * 5
@@ -499,16 +641,27 @@ class Game:
                 player.draw(self.screen)
             for i, player in enumerate(self.players):
                 self.ui.draw_player_hud(self.screen, player, is_p2=(i == 1))
-            total_score = sum(p.score for p in self.players)
-            max_combo = max((p.combo for p in self.players), default=0)
-            max_mult = max((p.score_multiplier for p in self.players), default=1.0)
-            self.ui.draw_score(self.screen, total_score, max_combo, max_mult, self.difficulty.wave)
+            if self.state == GameState.REPLAY_PLAYING:
+                total_score = self.last_score
+                max_combo = 0
+                max_mult = 1.0
+                wave = self.last_wave
+            else:
+                total_score = sum(p.score for p in self.players)
+                max_combo = max((p.combo for p in self.players), default=0)
+                max_mult = max((p.score_multiplier for p in self.players), default=1.0)
+                wave = self.difficulty.wave
+            self.ui.draw_score(self.screen, total_score, max_combo, max_mult, wave)
             if self.boss and self.boss.alive:
                 self.ui.draw_boss_health(self.screen, self.boss)
             for p in self.players:
                 if p.alive and p.slowmo_active:
                     self.ui.draw_slowmo_indicator(self.screen, True, p.slowmo_timer, SLOWMO_DURATION)
                     break
+            if self.state == GameState.REPLAY_PLAYING:
+                pygame.draw.rect(self.screen, (0, 0, 0, 150), (0, 0, 180, 40))
+                self.ui.draw_text(self.screen, '回 放 中  [ESC 退出]',
+                                  10, 12, (255, 200, 100), self.ui.font_small)
         if self.state == GameState.MENU:
             self.ui.draw_menu(self.screen, '太空射击', self.menu_options, self.menu_idx)
             self.ui.draw_controls(self.screen, 40, SCREEN_HEIGHT - 140, is_p2=False)
@@ -526,6 +679,47 @@ class Game:
             options = replay_list + ['返回']
             self.ui.draw_menu(self.screen, '回放', options, self.replay_idx,
                               center_y=SCREEN_HEIGHT // 2 - 50)
+        elif self.state == GameState.CUSTOMIZE:
+            cx = SCREEN_WIDTH // 2
+            cy = 100
+            self.ui.draw_text_with_shadow(self.screen, '飞船自定义', cx, cy,
+                                           (0, 220, 255), self.ui.font_large, center=True)
+            preview_x = cx
+            preview_y = 300
+            preview_color = self.ship_colors[self.ship_color_idx][0]
+            preview_surf = pygame.Surface((120, 140), pygame.SRCALPHA)
+            tmp_player = Player(1)
+            tmp_player.color = preview_color
+            tmp_player.shape_type = self.ship_shape_idx
+            tmp_player.width = 72
+            tmp_player.height = 80
+            tmp_player._draw_ship_shape(preview_surf, 60, 70, preview_color)
+            self.screen.blit(preview_surf, (preview_x - 60, preview_y - 70))
+            pygame.draw.polygon(self.screen, (255, 180, 50), [
+                (preview_x - 10, preview_y + 45),
+                (preview_x, preview_y + 65 + int(math.sin(pygame.time.get_ticks() / 100) * 4)),
+                (preview_x + 10, preview_y + 45),
+            ])
+            for i, opt in enumerate(self.customize_options):
+                item_y = 420 + i * 45
+                color = (255, 255, 255) if i == self.customize_idx else (150, 150, 180)
+                if i == 0:
+                    val = self.ship_colors[self.ship_color_idx][1]
+                elif i == 1:
+                    val = self.ship_shapes[self.ship_shape_idx]
+                elif i == 2:
+                    wp_names = {'laser': '激光炮', 'shotgun': '霰弹枪',
+                                'missile': '追踪导弹', 'plasma': '等离子炮'}
+                    val = wp_names.get(self.start_weapons[self.start_weapon_idx], '未知')
+                else:
+                    val = ''
+                arrow = ' <' if i == self.customize_idx else '  '
+                arrow2 = '> ' if i == self.customize_idx else '  '
+                display = f'{arrow2}{opt}' + (f':  {val}' if i < 3 else '') + arrow
+                self.ui.draw_text(self.screen, display, cx, item_y, color,
+                                  self.ui.font_medium, center=True)
+            self.ui.draw_text(self.screen, '按 ←/→ 更改选项  ↓/↑ 切换  ESC 或确认返回',
+                              cx, SCREEN_HEIGHT - 60, (100, 150, 200), self.ui.font_small, center=True)
         elif self.state == GameState.WAVE_NOTIFY:
             self.ui.draw_wave_notification(self.screen, self.difficulty.wave)
         elif self.state == GameState.BOSS_INTRO:

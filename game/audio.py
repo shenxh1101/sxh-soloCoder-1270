@@ -13,7 +13,51 @@ class SoundManager:
         self.shoot_sounds = {}
         self.explosion_sounds = {}
         self.enabled = True
+        self._music_channels = []
+        self._bg_sounds = [None, None, None]
         self._generate_sounds()
+        self._init_music_channels()
+
+    def _generate_loop_tone(self, base_freq, duration, volume, layer_idx):
+        sample_rate = 44100
+        n_samples = int(sample_rate * duration)
+        buf = array.array('h')
+        for i in range(n_samples):
+            t = i / sample_rate
+            if layer_idx == 0:
+                env = 0.5 + 0.5 * math.sin(2 * math.pi * 0.1 * t)
+                v = (math.sin(2 * math.pi * base_freq * t) * 0.6 +
+                     math.sin(2 * math.pi * base_freq * 1.5 * t) * 0.3) * env
+            elif layer_idx == 1:
+                env = 0.6 + 0.4 * math.sin(2 * math.pi * 0.15 * t + 1)
+                v = (math.sin(2 * math.pi * base_freq * t) * 0.4 +
+                     math.sin(2 * math.pi * base_freq * 2 * t) * 0.3 +
+                     (1.0 if math.sin(2 * math.pi * base_freq * 3 * t) > 0 else -1.0) * 0.2) * env
+            else:
+                env = 0.7 + 0.3 * math.sin(2 * math.pi * 0.2 * t + 2)
+                v = ((1.0 if math.sin(2 * math.pi * base_freq * t) > 0 else -1.0) * 0.5 +
+                     math.sin(2 * math.pi * base_freq * 1.33 * t) * 0.3 +
+                     (2 * (base_freq * 0.5 * t - math.floor(base_freq * 0.5 * t + 0.5))) * 0.2) * env
+            sample = int(v * volume * 32767)
+            sample = max(-32768, min(32767, sample))
+            buf.append(sample)
+            buf.append(sample)
+        return pygame.mixer.Sound(buffer=buf)
+
+    def _init_music_channels(self):
+        try:
+            pygame.mixer.set_num_channels(16)
+            self._bg_sounds[0] = self._generate_loop_tone(110, 8.0, 0.08, 0)
+            self._bg_sounds[1] = self._generate_loop_tone(165, 8.0, 0.06, 1)
+            self._bg_sounds[2] = self._generate_loop_tone(220, 8.0, 0.05, 2)
+            for i in range(3):
+                ch = pygame.mixer.Channel(i)
+                self._music_channels.append(ch)
+                if self._bg_sounds[i]:
+                    self._bg_sounds[i].set_volume(0.0)
+                    ch.play(self._bg_sounds[i], loops=-1)
+        except Exception:
+            pass
 
     def _generate_tone(self, frequency, duration, volume=0.3, waveform='sine', decay=3.0):
         sample_rate = 44100
@@ -135,6 +179,22 @@ class SoundManager:
 
     def update(self, dt):
         self.music_intensity += (self.target_intensity - self.music_intensity) * dt / 2000
+        for i, ch in enumerate(self._music_channels):
+            if not ch or self._bg_sounds[i] is None:
+                continue
+            vol = 0.0
+            if i == 0:
+                vol = 0.35
+            elif i == 1:
+                vol = 0.5 * max(0, self.music_intensity - 0.2) * 1.25
+            elif i == 2:
+                vol = 0.7 * max(0, self.music_intensity - 0.6) * 2.5
+            self._bg_sounds[i].set_volume(min(1.0, vol))
 
     def toggle(self):
         self.enabled = not self.enabled
+        if not self.enabled:
+            for ch in self._music_channels:
+                if ch:
+                    ch.set_volume(0.0)
+        return self.enabled

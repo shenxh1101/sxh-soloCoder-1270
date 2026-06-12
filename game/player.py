@@ -31,6 +31,7 @@ class Player:
         }
         self.weapon_order = ['laser', 'shotgun', 'missile', 'plasma']
         self.color = COLORS['player'] if player_id == 1 else COLORS['player2']
+        self.shape_type = 0
         self.speed_mult = 1.0
         self.bullets = []
         self.is_firing = False
@@ -237,16 +238,49 @@ class Player:
 
     def _draw_ship_shape(self, surf, cx, cy, color):
         w, h = self.width, self.height
-        points = [
-            (cx, cy - h / 2),
-            (cx + w / 2, cy + h / 2),
-            (cx + w / 4, cy + h / 4),
-            (cx, cy + h / 3),
-            (cx - w / 4, cy + h / 4),
-            (cx - w / 2, cy + h / 2),
-        ]
-        pygame.draw.polygon(surf, color, points)
-        pygame.draw.polygon(surf, (255, 255, 255), points, 2)
+        if self.shape_type == 0:
+            points = [
+                (cx, cy - h / 2),
+                (cx + w / 2, cy + h / 2),
+                (cx + w / 4, cy + h / 4),
+                (cx, cy + h / 3),
+                (cx - w / 4, cy + h / 4),
+                (cx - w / 2, cy + h / 2),
+            ]
+            pygame.draw.polygon(surf, color, points)
+            pygame.draw.polygon(surf, (255, 255, 255), points, 2)
+        elif self.shape_type == 1:
+            points = [
+                (cx, cy - h / 2),
+                (cx + w / 2 + 4, cy - h / 6),
+                (cx + w / 2, cy + h / 2),
+                (cx - w / 2, cy + h / 2),
+                (cx - w / 2 - 4, cy - h / 6),
+            ]
+            pygame.draw.polygon(surf, color, points)
+            pygame.draw.polygon(surf, (255, 255, 255), points, 2)
+            pygame.draw.rect(surf, color, (cx - w / 3, cy - h / 8, w * 2 / 3, h / 3), border_radius=3)
+        elif self.shape_type == 2:
+            points = [
+                (cx, cy - h / 2 - 4),
+                (cx + w / 4, cy),
+                (cx + w / 3, cy + h / 3),
+                (cx, cy + h / 2),
+                (cx - w / 3, cy + h / 3),
+                (cx - w / 4, cy),
+            ]
+            pygame.draw.polygon(surf, color, points)
+            pygame.draw.polygon(surf, (255, 255, 255), points, 2)
+        elif self.shape_type == 3:
+            points = [
+                (cx, cy - h / 2),
+                (cx + w / 2, cy + h / 2),
+                (cx - w / 2, cy + h / 2),
+            ]
+            pygame.draw.polygon(surf, color, points)
+            pygame.draw.polygon(surf, (255, 255, 255), points, 2)
+            pygame.draw.line(surf, (255, 255, 255),
+                             (cx, cy - h / 2 + 8), (cx, cy + h / 2 - 4), 2)
         cockpit_color = (200, 240, 255)
         pygame.draw.polygon(surf, cockpit_color, [
             (cx, cy - h / 3),
